@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PhD Searcher — control panel</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --border: #e2e5ea; --text: #1c2430;
+    --muted: #6b7480; --accent: #2f6feb; --accent-fg: #fff;
+    --ok: #1a9c5b; --warn: #c98a00; --err: #d33a3a; --run: #2f6feb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c; --card: #1c2027; --border: #2b313b; --text: #e6e9ef;
+      --muted: #9aa3af; --accent: #4a86ff; --accent-fg: #fff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--card); }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); display: inline-block; }
+  .dot.ok { background: var(--ok); } .dot.err { background: var(--err); }
+  .spacer { flex: 1; }
+  #updated { color: var(--muted); font-size: 12px; }
+  nav { display: flex; gap: 4px; padding: 10px 20px 0; }
+  nav button { background: none; border: none; border-bottom: 2px solid transparent; padding: 8px 14px; cursor: pointer; color: var(--muted); font-size: 14px; }
+  nav button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  main { padding: 20px; max-width: 1100px; }
+  .tab { display: none; } .tab.active { display: block; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  h2 { font-size: 14px; margin: 0 0 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; }
+  .tile { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .tile .n { font-size: 26px; font-weight: 700; } .tile .l { color: var(--muted); font-size: 12px; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; color: #fff; }
+  .badge.idle { background: var(--muted); } .badge.running, .badge.stopping { background: var(--run); }
+  .badge.done { background: var(--ok); } .badge.stopped { background: var(--warn); } .badge.failed { background: var(--err); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 4px 0; }
+  .row b { color: var(--muted); font-weight: 500; min-width: 90px; display: inline-block; }
+  .progress { height: 8px; background: var(--border); border-radius: 6px; overflow: hidden; margin: 8px 0; }
+  .progress > div { height: 100%; background: var(--accent); transition: width .3s; }
+  button.act { background: var(--accent); color: var(--accent-fg); border: none; border-radius: 8px; padding: 8px 16px; cursor: pointer; font-size: 14px; }
+  button.act.ghost { background: none; color: var(--text); border: 1px solid var(--border); }
+  button.act:disabled { opacity: .4; cursor: not-allowed; }
+  input, select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font: inherit; }
+  label { font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .stages { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; }
+  tr:hover td { background: rgba(127,127,127,.06); }
+  a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+  .table-wrap { overflow-x: auto; }
+  .hit { border-bottom: 1px solid var(--border); padding: 10px 0; }
+  .hit .meta { color: var(--muted); font-size: 12px; }
+  .score { float: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .detail { margin-top: 8px; padding: 10px; background: var(--bg); border-radius: 8px; white-space: pre-wrap; font-size: 13px; }
+  .err-msg { color: var(--err); font-size: 13px; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <span id="health" class="dot"></span>
+  <h1>PhD Searcher</h1>
+  <span class="spacer"></span>
+  <span id="updated"></span>
+</header>
+<nav>
+  <button data-tab="pipeline" class="active">Pipeline</button>
+  <button data-tab="coverage">Coverage</button>
+  <button data-tab="search">Search</button>
+</nav>
+<main>
+  <!-- PIPELINE -->
+  <section id="pipeline" class="tab active">
+    <div class="card">
+      <h2>Status</h2>
+      <div id="pstatus" class="muted">loading…</div>
+    </div>
+    <div class="card">
+      <h2>Controls</h2>
+      <div class="stages" id="stageboxes"></div>
+      <div class="controls">
+        <label>limit <input id="p-limit" type="number" min="1" style="width:90px" placeholder="all"></label>
+        <label>name <input id="p-name" type="text" placeholder="university ILIKE"></label>
+        <button class="act" id="btn-start">Start</button>
+        <button class="act ghost" id="btn-resume">Resume</button>
+        <button class="act ghost" id="btn-stop">Stop</button>
+      </div>
+      <div id="pctrl-msg" class="err-msg" style="margin-top:10px"></div>
+      <p class="muted" style="margin:10px 0 0">No stage checked = full pipeline (canonical order). Only one run can be active across the cluster.</p>
+    </div>
+  </section>
+
+  <!-- COVERAGE -->
+  <section id="coverage" class="tab">
+    <div class="tiles" id="cov-tiles"></div>
+    <div class="card">
+      <h2>Universities</h2>
+      <input id="cov-filter" type="text" placeholder="filter by name or country…" style="width:100%;margin-bottom:12px">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Country</th><th>University</th><th>Discovery</th><th>Pages ok/total</th><th>Positions</th><th></th></tr></thead>
+          <tbody id="cov-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- SEARCH -->
+  <section id="search" class="tab">
+    <div class="card">
+      <h2>Semantic search</h2>
+      <div class="controls">
+        <input id="s-query" type="text" placeholder="e.g. machine learning for climate" style="flex:1;min-width:240px">
+        <input id="s-country" type="text" placeholder="country (IT)" style="width:110px">
+        <input id="s-univ" type="text" placeholder="university (exact)" style="width:170px">
+        <label>after <input id="s-deadline" type="date"></label>
+        <label>limit <input id="s-limit" type="number" min="1" max="100" value="10" style="width:80px"></label>
+        <button class="act" id="btn-search">Search</button>
+      </div>
+      <div id="s-msg" class="err-msg" style="margin-top:10px"></div>
+    </div>
+    <div class="card" id="s-results-card" style="display:none">
+      <h2>Results</h2>
+      <div id="s-results"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const api = async (path, opts) => {
+  const r = await fetch(path, opts);
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.detail || `${r.status} ${r.statusText}`);
+  return body;
+};
+const fmtSecs = s => s == null ? "—" : s < 60 ? `${Math.round(s)}s` : `${Math.floor(s/60)}m ${Math.round(s%60)}s`;
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// tabs
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach(x => x.classList.toggle("active", x === b));
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.id === b.dataset.tab));
+  if (b.dataset.tab === "coverage") loadCoverage();
+});
+
+// ---- pipeline ----
+const STAGES = ["universities", "euraxess", "discovery", "schema", "scrape", "index"];
+$("#stageboxes").innerHTML = STAGES.map(s =>
+  `<label><input type="checkbox" value="${s}"> ${s}</label>`).join("");
+
+function renderStatus(st) {
+  const cur = st.current_stage;
+  const pct = cur && cur.total ? Math.round(100 * cur.done / cur.total) : 0;
+  $("#pstatus").innerHTML = `
+    <div class="row"><span class="badge ${esc(st.state)}">${esc(st.state)}</span>
+      ${st.run_id != null ? `<span class="muted">run #${st.run_id}</span>` : ""}</div>
+    ${cur ? `
+      <div class="row"><b>stage</b> ${esc(cur.name)} — ${cur.done}${cur.total != null ? "/"+cur.total : ""}
+        ${cur.current ? `<span class="muted">· ${esc(cur.current)}</span>` : ""}</div>
+      <div class="progress"><div style="width:${pct}%"></div></div>
+      <div class="row"><b>avg</b> ${fmtSecs(cur.avg_seconds)} <b>eta</b> ${fmtSecs(cur.eta_seconds)}</div>` : ""}
+    <div class="row"><b>done</b> ${Object.entries(st.stages_done).map(([k,v]) => `${esc(k)}:${v}`).join(", ") || "—"}</div>
+    <div class="row"><b>pending</b> ${st.stages_pending.map(esc).join(", ") || "—"}</div>
+    <div class="row"><b>started</b> ${st.started_at ? new Date(st.started_at).toLocaleString() : "—"}
+      <b>finished</b> ${st.finished_at ? new Date(st.finished_at).toLocaleString() : "—"}</div>
+    ${st.error ? `<div class="row err-msg"><b>error</b> ${esc(st.error)}</div>` : ""}`;
+  const active = st.state === "running" || st.state === "stopping";
+  $("#btn-start").disabled = active;
+  $("#btn-stop").disabled = !active;
+  $("#btn-resume").disabled = active;
+}
+
+async function poll() {
+  try {
+    await api("/health");
+    $("#health").className = "dot ok"; $("#health").title = "API healthy";
+  } catch { $("#health").className = "dot err"; $("#health").title = "API unreachable"; }
+  try {
+    renderStatus(await api("/v1/pipeline/status"));
+    $("#updated").textContent = "updated " + new Date().toLocaleTimeString();
+  } catch (e) { $("#pstatus").innerHTML = `<span class="err-msg">${esc(e.message)}</span>`; }
+}
+
+async function pipelineAction(path, body) {
+  $("#pctrl-msg").textContent = "";
+  try { renderStatus(await api(path, body ? {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(body)} : {method:"POST"})); }
+  catch (e) { $("#pctrl-msg").textContent = e.message; }
+}
+$("#btn-start").onclick = () => {
+  const stages = [...document.querySelectorAll("#stageboxes input:checked")].map(c => c.value);
+  const limit = $("#p-limit").value ? +$("#p-limit").value : null;
+  const name = $("#p-name").value.trim() || null;
+  pipelineAction("/v1/pipeline/start", {stages: stages.length ? stages : null, limit, name});
+};
+$("#btn-stop").onclick = () => pipelineAction("/v1/pipeline/stop");
+$("#btn-resume").onclick = () => pipelineAction("/v1/pipeline/resume");
+
+// ---- coverage ----
+let covData = [];
+async function loadCoverage() {
+  try {
+    covData = (await api("/v1/universities")).universities;
+    const sum = k => covData.reduce((a, u) => a + u[k], 0);
+    const withPos = covData.filter(u => u.positions_count > 0).length;
+    $("#cov-tiles").innerHTML = [
+      ["Universities", covData.length], ["With positions", withPos],
+      ["Positions", sum("positions_count")],
+      ["Listing pages", `${sum("listing_pages_ok")}/${sum("listing_pages_count")}`],
+    ].map(([l, n]) => `<div class="tile"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
+    renderCoverage();
+  } catch (e) { $("#cov-tiles").innerHTML = `<span class="err-msg">${esc(e.message)}</span>`; }
+}
+function renderCoverage() {
+  const f = $("#cov-filter").value.toLowerCase();
+  const rows = covData.filter(u => !f || u.name.toLowerCase().includes(f) || u.country.toLowerCase().includes(f));
+  $("#cov-body").innerHTML = rows.map(u => `<tr>
+    <td>${esc(u.country)}</td><td>${esc(u.name)}</td><td>${esc(u.discovery_status)}</td>
+    <td>${u.listing_pages_ok}/${u.listing_pages_count}</td><td>${u.positions_count}</td>
+    <td><a href="${esc(u.website_url)}" target="_blank" rel="noopener">site ↗</a></td></tr>`).join("")
+    || `<tr><td colspan="6" class="muted">no matches</td></tr>`;
+}
+$("#cov-filter").oninput = renderCoverage;
+
+// ---- search ----
+$("#btn-search").onclick = doSearch;
+$("#s-query").addEventListener("keydown", e => { if (e.key === "Enter") doSearch(); });
+async function doSearch() {
+  $("#s-msg").textContent = "";
+  const q = $("#s-query").value.trim();
+  if (!q) { $("#s-msg").textContent = "query required"; return; }
+  const body = {
+    query: q,
+    country: $("#s-country").value.trim() || null,
+    university: $("#s-univ").value.trim() || null,
+    deadline_after: $("#s-deadline").value || null,
+    limit: +$("#s-limit").value || 10,
+  };
+  try {
+    const { hits } = await api("/v1/search", {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(body)});
+    $("#s-results-card").style.display = "block";
+    $("#s-results").innerHTML = hits.length ? hits.map(h => `<div class="hit">
+      <span class="score">${h.score.toFixed(3)}</span>
+      <a href="${esc(h.url)}" target="_blank" rel="noopener">${esc(h.title)}</a>
+      <div class="meta">${esc(h.university)} · ${esc(h.country)} · deadline ${h.deadline || "—"}
+        · <a href="#" onclick="showDetail(${h.position_id});return false">detail</a></div>
+      <div class="detail" id="det-${h.position_id}" style="display:none"></div></div>`).join("")
+      : `<p class="muted">no hits</p>`;
+  } catch (e) { $("#s-msg").textContent = e.message; }
+}
+async function showDetail(id) {
+  const el = $("#det-" + id);
+  if (el.style.display === "block") { el.style.display = "none"; return; }
+  el.style.display = "block"; el.textContent = "loading…";
+  try {
+    const { found, position: p } = await api("/v1/positions/" + id);
+    el.textContent = found ? `${p.title}\n\ndeadline: ${p.deadline || "—"} (raw: ${p.deadline_raw || "—"})\n\n${p.description}` : "not found";
+  } catch (e) { el.textContent = e.message; }
+}
+window.showDetail = showDetail;
+
+// boot
+poll();
+setInterval(poll, 3000);
+</script>
+</body>
+</html>

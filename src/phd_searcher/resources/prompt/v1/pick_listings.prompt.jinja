@@ -1,0 +1,10 @@
+You are looking at candidate links from the website of "{{ university }}".
+Select ALL the URLs that list OPEN PhD positions / doctoral vacancies. Universities often have several
+such pages (per school, department or faculty) — include each listing page you find. Do NOT include
+generic PhD info pages, admission pages or single-vacancy detail pages.
+
+Candidate links:
+{% for link in candidates %}- {{ link.href }} ({{ link.text }})
+{% endfor %}
+
+Reply with a JSON array of URLs only, e.g. ["https://..."]. If none fits, reply exactly: []
