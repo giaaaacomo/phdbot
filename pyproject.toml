@@ -16,10 +16,13 @@ classifiers = [
 ]
 
 dependencies = [
+    "beautifulsoup4>=4.13",
     "hypercorn>=0.17",
     "injector>=0.24.0",
     "jinja2>=3.1.4",
-    "litellm>=1.83.0",
+    # Crawl4AI distribuisce il proprio fork con lo stesso modulo importabile `litellm`.
+    # Installare anche il pacchetto upstream sovrascrive file del fork e rompe gli import.
+    "unclecode-litellm>=1.81.13",
     "pydantic>=2.12.0",
     "pydantic-settings>=2.12.0",
     "python-dotenv>=1.0",
@@ -29,6 +32,7 @@ dependencies = [
     "crawl4ai>=0.9.2",
     "qdrant-client>=1.18.0",
     "httpx>=0.28.1",
+    "pypdf>=5.0",
     "fastapi>=0.139.2",
     "ddgs>=9.14.4",
 ]

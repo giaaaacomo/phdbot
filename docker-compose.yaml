@@ -7,18 +7,24 @@ services:
       - "${API_HOST_PORT:-8003}:8000"
     env_file:
       - .env
+    volumes:
+      - ./exports:/app/exports
     environment:
       # Override the DB host to reach the compose service (env_file points at localhost).
       PHD_SEARCHER__DATABASE__URL: postgresql+asyncpg://app:app@postgres:5432/app
       PHD_SEARCHER__QDRANT__URL: http://qdrant:6333
-    extra_hosts:
-      # LLM locale sull'host raggiungibile dal container come host.docker.internal
-      - "host.docker.internal:host-gateway"
+      PHD_SEARCHER__LLM__API_BASE: http://ollama:11434
+      PHD_SEARCHER__EMBEDDING__API_BASE: http://ollama:11434
+      # LiteLLM usa anche questa variabile per interrogare i metadati dei modelli Ollama.
+      OLLAMA_API_BASE: http://ollama:11434
     depends_on:
       postgres:
         condition: service_healthy
       qdrant:
         condition: service_started
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "/app/healthcheck.py"]
       interval: 10s
@@ -36,6 +42,7 @@ services:
       - "${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d app"]
       interval: 5s
@@ -43,12 +50,74 @@ services:
       retries: 10
 
   qdrant:
-    image: qdrant/qdrant:v1.15.1
+    image: qdrant/qdrant:v1.18.0
     ports:
       - "${QDRANT_HOST_PORT:-6333}:6333"
     volumes:
       - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "${OLLAMA_HOST_PORT:-11434}:11434"
+    volumes:
+      - ollama:/root/.ollama
+      - ./ollama/model_files/run_ollama.sh:/model_files/run_ollama.sh:ro
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-gpt-oss:20b}"
+      OLLAMA_EMBEDDING_MODEL: "${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}"
+      OLLAMA_KEEP_ALIVE: "${OLLAMA_KEEP_ALIVE:-5m}"
+      # Lascia margine alla sessione grafica NVIDIA e alle allocazioni transitorie.
+      OLLAMA_GPU_OVERHEAD: "${OLLAMA_GPU_OVERHEAD:-3221225472}"
+      # Mantiene un solo modello in VRAM: LLM ed embedding si alternano.
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      # Una sola richiesta alla volta evita picchi di VRAM sulla GPU da 16 GB.
+      OLLAMA_NUM_PARALLEL: "1"
+    # Avoid downloading/replacing a multi-GB runtime image every time only the
+    # PHDBOT API is rebuilt.  Updates remain explicit via
+    # `docker compose pull ollama`.
+    pull_policy: missing
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/model_files/run_ollama.sh"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/ollama-models-ready && ollama list >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 180
+      start_period: 10s
+
+  # Interfaccia Ollama opzionale: `docker compose --profile open-webui up -d`.
+  # La dashboard PHDBOT richiesta dal progetto resta su http://localhost:8003/.
+  ollama-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    profiles: [open-webui]
+    ports:
+      - "${OLLAMA_WEBUI_HOST_PORT:-3000}:8080"
+    volumes:
+      - ollama-webui:/app/backend/data
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+    restart: unless-stopped
 
 volumes:
   pgdata:
   qdrant_data:
+  # Riusa i volumi creati dal compose Ollama avviato in precedenza.
+  ollama:
+    external: true
+    name: ollama_ollama
+  ollama-webui:
+    external: true
+    name: ollama_ollama-webui

@@ -1,6 +1,7 @@
-UV = uv
+UV ?= $(if $(wildcard $(HOME)/.local/bin/uv),$(HOME)/.local/bin/uv,uv)
+PROJECT_DIR ?= $(CURDIR)
 
-.PHONY: help setup run stop test test-unit test-integration lint ruff mypy mypy-ci mypy-stop format lock sync migrate revision pipeline clean
+.PHONY: help setup run stop test test-unit test-integration lint ruff mypy mypy-ci mypy-stop format lock sync migrate revision pipeline display-refresh-install display-refresh-status completion-install completion-status clean
 
 ALEMBIC = $(UV) run alembic -c src/phd_searcher/database/alembic.ini
 
@@ -18,6 +19,10 @@ help:
 	@echo "  make migrate          - Apply DB migrations (alembic upgrade head)"
 	@echo "  make revision name=X  - Autogenerate a migration named X"
 	@echo "  make pipeline args=X  - Run a pipeline stage in the API container, e.g. args=\"discovery --limit 20\""
+	@echo "  make display-refresh-install - Lower the ultrawide refresh automatically during runs"
+	@echo "  make display-refresh-status  - Inspect the host display supervisor"
+	@echo "  make completion-install schedule=N - Guard a scheduled run and deploy/index on completion"
+	@echo "  make completion-status schedule=N  - Inspect the completion guard"
 	@echo "  make clean            - Remove virtualenvs"
 
 setup:
@@ -76,6 +81,29 @@ revision:
 pipeline:
 	@test -n "$(args)" || { echo "usage: make pipeline args=\"<stage> [--limit N] [--name X]\""; exit 1; }
 	docker compose run --rm api python -m phd_searcher.pipeline.cli $(args)
+
+display-refresh-install:
+	install -d -m 0755 "$(HOME)/.local/bin" "$(HOME)/.config/systemd/user"
+	install -m 0755 scripts/display_refresh_supervisor.py "$(HOME)/.local/bin/phdbot-display-refresh-supervisor"
+	install -m 0644 deploy/systemd/phdbot-display-refresh.service "$(HOME)/.config/systemd/user/phdbot-display-refresh.service"
+	systemctl --user daemon-reload
+	systemctl --user enable phdbot-display-refresh.service
+	systemctl --user restart phdbot-display-refresh.service
+
+display-refresh-status:
+	systemctl --user status --no-pager phdbot-display-refresh.service
+
+completion-install:
+	@test -n "$(schedule)" || { echo "usage: make completion-install schedule=<job-id>"; exit 1; }
+	install -d -m 0755 "$(HOME)/.local/bin" "$(HOME)/.config/systemd/user"
+	install -m 0755 scripts/pipeline_completion_supervisor.py "$(HOME)/.local/bin/phdbot-completion-supervisor"
+	sed 's|@PROJECT_DIR@|$(abspath $(PROJECT_DIR))|g' deploy/systemd/phdbot-completion@.service | install -m 0644 /dev/stdin "$(HOME)/.config/systemd/user/phdbot-completion@.service"
+	systemctl --user daemon-reload
+	systemctl --user enable --now "phdbot-completion@$(schedule).service"
+
+completion-status:
+	@test -n "$(schedule)" || { echo "usage: make completion-status schedule=<job-id>"; exit 1; }
+	systemctl --user status --no-pager "phdbot-completion@$(schedule).service"
 
 clean:
 	rm -rf .venv tests/integration/.venv

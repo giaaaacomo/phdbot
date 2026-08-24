@@ -2,6 +2,7 @@ from injector import Module, provider, singleton
 
 from phd_searcher.config import Settings
 from phd_searcher.config.database import DatabaseConfig
+from phd_searcher.config.export import ExportConfig
 from phd_searcher.config.llm import EmbeddingConfig, LLMConfig
 from phd_searcher.config.qdrant import QdrantConfig
 from phd_searcher.config.search import SearchConfig
@@ -42,3 +43,8 @@ class ConfigModule(Module):
     @provider
     def provide_search_config(self, settings: Settings) -> SearchConfig:
         return settings.search
+
+    @singleton
+    @provider
+    def provide_export_config(self, settings: Settings) -> ExportConfig:
+        return settings.export

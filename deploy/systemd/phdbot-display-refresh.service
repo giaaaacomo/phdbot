@@ -1,0 +1,19 @@
+[Unit]
+Description=PHDBOT automatic external-display refresh supervisor
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/phdbot-display-refresh-supervisor --base-url http://127.0.0.1:8003 --target-hz 60
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%t
+
+[Install]
+WantedBy=default.target

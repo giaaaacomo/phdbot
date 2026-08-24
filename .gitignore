@@ -104,6 +104,8 @@ ipython_config.py
 #   This is especially recommended for binary packages to ensure reproducibility, and is more
 #   commonly ignored for libraries.
 # uv.lock
+.venv/
+.venv-*/
 
 # poetry
 #   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
@@ -156,8 +158,20 @@ activemq-data/
 docker-compose.override.yaml
 docker-compose.override.yml
 
+# Local database/vector safety snapshots. Never place operational data in Git
+# history; publish deliberately sanitized seed artifacts outside the repository.
+/backups/*
+!/backups/README.md
+
 # Environments
 .env
+exports/*
+!exports/.gitkeep
+.PHDBOT.local
+/PHDBOT.code-workspace
+/docs/CURRENT_STATE.md
+/ollama/docker-compose.yaml
+/ollama/model_files/Modelfile
 .envrc
 .venv
 env/

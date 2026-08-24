@@ -2,15 +2,78 @@
 
 from __future__ import annotations
 
-from datetime import datetime, time
+import time as monotonic_time
+import xml.etree.ElementTree as ET
+from datetime import UTC, datetime, time
+from typing import cast
 
+import httpx
 from injector import inject
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import DatetimeRange, FieldCondition, Filter, MatchValue
+from qdrant_client.models import DatetimeRange, FieldCondition, Filter, MatchAny, MatchValue, Range
 
 from phd_searcher.config.qdrant import QdrantConfig
 from phd_searcher.engine.model_helper import ModelHelper
-from phd_searcher.typedef.search import SearchBody, SearchHit, SearchResult
+from phd_searcher.opportunity_kinds import normalize_opportunity_kind
+from phd_searcher.position_types import classify_position
+from phd_searcher.typedef.search import (
+    InstitutionHit,
+    SearchBody,
+    SearchHit,
+    SearchResult,
+    UncertaintyFlag,
+    VerificationStatus,
+)
+
+_ECB_RATES_URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
+_RATES_TTL_SECONDS = 12 * 60 * 60
+_rates: dict[str, float] = {"EUR": 1.0}
+_rates_loaded_at = 0.0
+
+
+def _payload_confidence(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (float, int)):
+        return None
+    confidence = float(value)
+    return confidence if 0 <= confidence <= 1 else None
+
+
+def _payload_uncertainty(value: object, *, default: int = 0) -> int:
+    if isinstance(value, bool) or not isinstance(value, (float, int)):
+        return default
+    return round(max(0.0, min(float(value), 100.0)))
+
+
+def _payload_uncertainty_flags(value: object) -> list[UncertaintyFlag]:
+    if not isinstance(value, list):
+        return []
+    allowed: set[str] = {"open_status", "details", "verification", "source_family"}
+    return cast(
+        list[UncertaintyFlag],
+        list(dict.fromkeys(item for item in value if isinstance(item, str) and item in allowed)),
+    )
+
+
+async def _euro_rates() -> dict[str, float]:
+    """Tassi ECB (unità di valuta per EUR), con cache e fallback non bloccante."""
+    global _rates, _rates_loaded_at
+    now = monotonic_time.monotonic()
+    if _rates_loaded_at > 0 and now - _rates_loaded_at < _RATES_TTL_SECONDS:
+        return _rates
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+            response = await client.get(_ECB_RATES_URL)
+            response.raise_for_status()
+        parsed = {"EUR": 1.0}
+        for element in ET.fromstring(response.content).iter():
+            currency, rate = element.attrib.get("currency"), element.attrib.get("rate")
+            if currency and rate:
+                parsed[currency] = float(rate)
+        _rates = parsed
+    except (httpx.HTTPError, ET.ParseError, ValueError):
+        pass
+    _rates_loaded_at = now
+    return _rates
 
 
 class SearchService:
@@ -23,29 +86,186 @@ class SearchService:
     async def search(self, body: SearchBody) -> SearchResult:
         vector = (await self._model.embed([body.query]))[0]
         must: list[FieldCondition] = []
-        if body.country:
-            must.append(FieldCondition(key="country", match=MatchValue(value=body.country)))
-        if body.university:
-            must.append(FieldCondition(key="university", match=MatchValue(value=body.university)))
-        if body.deadline_after:
-            gte = datetime.combine(body.deadline_after, time.min)
-            must.append(FieldCondition(key="deadline", range=DatetimeRange(gte=gte)))
+        must_not: list[FieldCondition] = []
+        if body.mode == "verified_only":
+            # Verification is an explicit evidence claim. Missing legacy
+            # metadata must never be silently promoted to verified.
+            must.append(
+                FieldCondition(
+                    key="verification_status",
+                    match=MatchValue(value="verified"),
+                )
+            )
+        if body.max_uncertainty is not None:
+            must.append(
+                FieldCondition(
+                    key="uncertainty_percent",
+                    range=Range(lte=float(body.max_uncertainty)),
+                )
+            )
+        countries = list(dict.fromkeys(([body.country] if body.country else []) + body.countries))
+        universities = list(dict.fromkeys(([body.university] if body.university else []) + body.universities))
+        if countries:
+            must.append(FieldCondition(key="country", match=MatchAny(any=countries)))
+        if universities:
+            must.append(FieldCondition(key="university", match=MatchAny(any=universities)))
+        if body.deadline_after or body.deadline_before:
+            must.append(
+                FieldCondition(
+                    key="deadline_ts",
+                    range=DatetimeRange(
+                        gte=datetime.combine(body.deadline_after, time.min, tzinfo=UTC) if body.deadline_after else None,
+                        lte=datetime.combine(body.deadline_before, time.max, tzinfo=UTC) if body.deadline_before else None,
+                    ),
+                )
+            )
+        if body.posted_after or body.posted_before:
+            must.append(
+                FieldCondition(
+                    key="published_ts",
+                    range=DatetimeRange(
+                        gte=datetime.combine(body.posted_after, time.min, tzinfo=UTC) if body.posted_after else None,
+                        lte=datetime.combine(body.posted_before, time.max, tzinfo=UTC) if body.posted_before else None,
+                    ),
+                )
+            )
+        count = (await self._qdrant.count(self._collection, exact=True)).count
+        if count == 0:
+            return SearchResult(hits=[], total=0)
+        institutions: list[InstitutionHit] = []
+        institution_collection = f"{self._collection}_institutions"
+        if await self._qdrant.collection_exists(institution_collection):
+            institution_must: list[FieldCondition] = []
+            if countries:
+                institution_must.append(FieldCondition(key="country", match=MatchAny(any=countries)))
+            if universities:
+                institution_must.append(FieldCondition(key="university", match=MatchAny(any=universities)))
+            institution_response = await self._qdrant.query_points(
+                institution_collection,
+                query=vector,
+                limit=12,
+                score_threshold=max(body.min_score - 0.2, 0.25),
+                query_filter=Filter(must=institution_must) if institution_must else None,
+            )
+            institutions = [
+                InstitutionHit(
+                    score=point.score,
+                    name=str((point.payload or {}).get("name", "")),
+                    kind=str((point.payload or {}).get("kind", "university")),
+                    university=str((point.payload or {}).get("university", "")),
+                    country=str((point.payload or {}).get("country", "")),
+                    url=str((point.payload or {}).get("url", "")),
+                    spontaneous_application_url=(point.payload or {}).get("spontaneous_application_url"),
+                    active_positions=int((point.payload or {}).get("active_positions", 0)),
+                )
+                for point in institution_response.points
+            ]
         response = await self._qdrant.query_points(
             self._collection,
             query=vector,
-            limit=body.limit,
-            query_filter=Filter(must=list(must)) if must else None,
+            limit=count,
+            score_threshold=body.min_score,
+            query_filter=(
+                Filter(must=list(must), must_not=list(must_not))
+                if must or must_not
+                else None
+            ),
         )
-        hits = [
-            SearchHit(
-                position_id=int(point.id),
-                score=point.score,
-                title=str((point.payload or {}).get("title", "")),
-                university=str((point.payload or {}).get("university", "")),
-                country=str((point.payload or {}).get("country", "")),
-                url=str((point.payload or {}).get("url", "")),
-                deadline=(point.payload or {}).get("deadline"),
+        hits: list[SearchHit] = []
+        for point in response.points:
+            payload = point.payload or {}
+            raw_verification_status = payload.get("verification_status")
+            verification_status = (
+                "verified"
+                if raw_verification_status == "verified"
+                else "probable"
             )
-            for point in response.points
-        ]
-        return SearchResult(hits=hits)
+            verification_metadata_missing = raw_verification_status not in {
+                "verified",
+                "probable",
+            }
+            uncertainty_flags = _payload_uncertainty_flags(
+                payload.get("uncertainty_flags")
+            )
+            if (
+                verification_metadata_missing
+                and "verification" not in uncertainty_flags
+            ):
+                uncertainty_flags.append("verification")
+            hits.append(
+                SearchHit(
+                    position_id=int(point.id),
+                    score=point.score,
+                    title=str(payload.get("title", "")),
+                    university=str(payload.get("university", "")),
+                    country=str(payload.get("country", "")),
+                    url=str(payload.get("url", "")),
+                    deadline=payload.get("deadline"),
+                    published_at=payload.get("published"),
+                    first_seen_at=payload.get("first_seen_at"),
+                    last_seen_at=payload.get("last_seen_at") or payload.get("scraped_at"),
+                    scraped_at=payload.get("scraped_at"),
+                    duration=payload.get("duration"),
+                    compensation=payload.get("compensation"),
+                    compensation_min=payload.get("compensation_min"),
+                    compensation_max=payload.get("compensation_max"),
+                    compensation_currency=payload.get("compensation_currency"),
+                    compensation_period=payload.get("compensation_period"),
+                    position_type=classify_position(
+                        str(payload.get("title", "")),
+                        explicit=payload.get("position_type"),
+                    ),
+                    opportunity_kind=normalize_opportunity_kind(
+                        payload.get("opportunity_kind")
+                    ),
+                    verification_status=cast(
+                        VerificationStatus,
+                        verification_status,
+                    ),
+                    confidence=_payload_confidence(payload.get("confidence")),
+                    uncertainty_percent=(
+                        100
+                        if verification_metadata_missing
+                        else _payload_uncertainty(
+                            payload.get("uncertainty_percent"),
+                            default=100 if verification_status == "probable" else 0,
+                        )
+                    ),
+                    uncertainty_flags=uncertainty_flags,
+                    source_family_signal=payload.get("source_family_signal"),
+                    source_family_samples=int(payload.get("source_family_samples") or 0),
+                    source_family_version=payload.get("source_family_version"),
+                )
+            )
+        if body.position_types:
+            hits = [hit for hit in hits if hit.position_type in body.position_types]
+
+        currencies = {hit.compensation_currency for hit in hits if hit.compensation_currency not in (None, "EUR")}
+        rates = await _euro_rates() if currencies else {"EUR": 1.0}
+        for hit in hits:
+            rate = rates.get(hit.compensation_currency or "")
+            if rate:
+                hit.compensation_eur_min = hit.compensation_min / rate if hit.compensation_min is not None else None
+                hit.compensation_eur_max = hit.compensation_max / rate if hit.compensation_max is not None else None
+        if body.compensation_min is not None:
+            hits = [
+                hit
+                for hit in hits
+                if hit.compensation_eur_max is not None and hit.compensation_eur_max >= body.compensation_min
+            ]
+        if body.sort_by != "relevance":
+            key_name = {
+                "uncertainty": "uncertainty_percent",
+                "compensation": "compensation_eur_max",
+                "posted": "published_at",
+                "deadline": "deadline",
+                "country": "country",
+            }[body.sort_by]
+            available = [hit for hit in hits if getattr(hit, key_name) not in (None, "")]
+            missing = [hit for hit in hits if getattr(hit, key_name) in (None, "")]
+            available.sort(key=lambda hit: getattr(hit, key_name), reverse=body.sort_order == "desc")
+            hits = available + missing
+        total = len(hits)
+        if body.limit is not None:
+            hits = hits[: body.limit]
+        return SearchResult(hits=hits, total=total, institutions=institutions)

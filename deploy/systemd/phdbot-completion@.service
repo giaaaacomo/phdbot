@@ -1,0 +1,19 @@
+[Unit]
+Description=PHDBOT completion guard for scheduled job %i
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=@PROJECT_DIR@
+ExecStart=%h/.local/bin/phdbot-completion-supervisor --base-url http://127.0.0.1:8003 --schedule-id %i --project-dir @PROJECT_DIR@ --state-file %S/phdbot/completion-%i.json --event-log %S/phdbot/completion-%i.ndjson --poll-seconds 300 --deploy-and-index --enrich-limit 700
+Restart=on-failure
+RestartSec=60
+Environment=PYTHONUNBUFFERED=1
+StateDirectory=phdbot
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=default.target

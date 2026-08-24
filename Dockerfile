@@ -13,7 +13,9 @@ RUN if [ -s apt-packages.txt ]; then \
 RUN pip install --no-cache-dir uv
 
 FROM base AS builder
-COPY --chown=appuser:appuser pyproject.toml uv.lock README.md /app/
+# Runtime dependencies depend only on the lock and project metadata.  README
+# edits must not invalidate the multi-hundred-MB Playwright/browser layer.
+COPY --chown=appuser:appuser pyproject.toml uv.lock /app/
 USER appuser
 ENV UV_COMPILE_BYTECODE=1 \
     UV_PROJECT_ENVIRONMENT=/app/.venv

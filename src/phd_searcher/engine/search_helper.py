@@ -8,7 +8,10 @@ import httpx
 
 from phd_searcher.config.search import SearchConfig
 
-_PHD_TERMS = 'phd OR doctoral OR "open positions" OR vacancies'
+_ACADEMIC_TERMS = (
+    'phd OR doctoral OR "open positions" OR vacancies OR postdoc OR assistantship '
+    'OR internship OR traineeship OR "research fellowship" OR "research positions" OR MPH'
+)
 
 
 def _ddg_search(query: str, max_results: int) -> list[str]:
@@ -31,7 +34,7 @@ async def _brave_search(query: str, max_results: int, api_key: str) -> list[str]
 
 async def search_listing_candidates(config: SearchConfig, domain: str) -> list[str]:
     """URL candidati per le pagine bandi di un dominio. Mai un'eccezione: [] su errore."""
-    query = f"site:{domain} {_PHD_TERMS}"
+    query = f"site:{domain} {_ACADEMIC_TERMS}"
     try:
         if config.provider == "brave" and config.api_key:
             return await _brave_search(query, config.max_results, config.api_key)

@@ -3,17 +3,29 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PhD Searcher — control panel</title>
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)">
+<title>PHDBOT — control panel</title>
 <style>
   :root {
+    color-scheme: light;
     --bg: #f6f7f9; --card: #fff; --border: #e2e5ea; --text: #1c2430;
     --muted: #6b7480; --accent: #2f6feb; --accent-fg: #fff;
     --ok: #1a9c5b; --warn: #c98a00; --err: #d33a3a; --run: #2f6feb;
+    --status-fg: #fff;
+    --hover: rgba(31, 45, 61, .05); --shadow: rgba(22, 27, 34, .18);
+    --focus: rgba(47, 111, 235, .28); --scroll-thumb: #b8bec8;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #14171c; --card: #1c2027; --border: #2b313b; --text: #e6e9ef;
-      --muted: #9aa3af; --accent: #4a86ff; --accent-fg: #fff;
+      color-scheme: dark;
+      --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #e6edf3;
+      --muted: #9da7b3; --accent: #6ea8fe; --accent-fg: #07111f;
+      --ok: #3fb950; --warn: #d29922; --err: #f85149; --run: #58a6ff;
+      --status-fg: #07111f;
+      --hover: rgba(177, 186, 196, .08); --shadow: rgba(0, 0, 0, .5);
+      --focus: rgba(110, 168, 254, .35); --scroll-thumb: #484f58;
     }
   }
   * { box-sizing: border-box; }
@@ -24,157 +36,621 @@
   .dot.ok { background: var(--ok); } .dot.err { background: var(--err); }
   .spacer { flex: 1; }
   #updated { color: var(--muted); font-size: 12px; }
-  nav { display: flex; gap: 4px; padding: 10px 20px 0; }
+  nav { position: sticky; top: 0; z-index: 20; display: flex; gap: 4px; padding: 10px 20px 0;
+    overflow-x: auto; background: color-mix(in srgb, var(--bg) 94%, transparent);
+    border-bottom: 1px solid transparent; backdrop-filter: blur(10px); }
   nav button { background: none; border: none; border-bottom: 2px solid transparent; padding: 8px 14px; cursor: pointer; color: var(--muted); font-size: 14px; }
   nav button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
-  main { padding: 20px; max-width: 1100px; }
+  main { padding: 20px; width: 100%; max-width: 3440px; margin: 0 auto; }
   .tab { display: none; } .tab.active { display: block; }
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
   h2 { font-size: 14px; margin: 0 0 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
-  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 240px));
+    justify-content: center; gap: 12px; }
+  .tab > .tiles { margin-bottom: 16px; }
   .tile { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
   .tile .n { font-size: 26px; font-weight: 700; } .tile .l { color: var(--muted); font-size: 12px; }
-  .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; color: #fff; }
-  .badge.idle { background: var(--muted); } .badge.running, .badge.stopping { background: var(--run); }
+  .country-mark { white-space: nowrap; cursor: help; }
+  button.review-filter-tile { appearance: none; color: var(--text); font: inherit; text-align: left; width: 100%;
+    cursor: pointer; transition: border-color .15s, box-shadow .15s, transform .15s; }
+  button.review-filter-tile:hover { border-color: var(--accent); box-shadow: 0 5px 16px var(--shadow); transform: translateY(-1px); }
+  button.review-filter-tile.active { border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
+  button.review-filter-tile.active .l { color: var(--text); font-weight: 600; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; color: var(--status-fg); }
+  .badge.idle, .badge.scheduled { background: var(--muted); }
+  .badge.running, .badge.stopping, .badge.starting { background: var(--run); }
+  .badge.waiting_pipeline { background: var(--warn); }
   .badge.done { background: var(--ok); } .badge.stopped { background: var(--warn); } .badge.failed { background: var(--err); }
+  .badge.cancelled { background: var(--muted); }
   .row { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 4px 0; }
   .row b { color: var(--muted); font-weight: 500; min-width: 90px; display: inline-block; }
   .progress { height: 8px; background: var(--border); border-radius: 6px; overflow: hidden; margin: 8px 0; }
   .progress > div { height: 100%; background: var(--accent); transition: width .3s; }
+  .queue-box { margin: 10px 0; padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--bg); }
+  .queue-box .progress > div { background: var(--warn); }
   button.act { background: var(--accent); color: var(--accent-fg); border: none; border-radius: 8px; padding: 8px 16px; cursor: pointer; font-size: 14px; }
   button.act.ghost { background: none; color: var(--text); border: 1px solid var(--border); }
+  button.act.danger { background: var(--err); color: var(--status-fg); border: 1px solid var(--err); }
   button.act:disabled { opacity: .4; cursor: not-allowed; }
+  button.act.searching:disabled { opacity: .85; }
+  .spinner { display: inline-block; width: 1em; height: 1em; border: 2px solid currentColor;
+    border-right-color: transparent; border-radius: 50%; animation: spin .75s linear infinite; vertical-align: -.15em; }
+  .loading-indicator { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
+  .panel-loading { display: flex; align-items: center; justify-content: center; gap: 9px;
+    min-height: 90px; color: var(--muted); }
+  .section-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .section-tools input { flex: 1 1 280px; }
+  .result-count { min-width: 8ch; text-align: right; font-variant-numeric: tabular-nums; }
+  #s-results-card, #s-institutions-card { transition: opacity .15s ease; }
+  #search.search-loading #s-results-card, #search.search-loading #s-institutions-card {
+    opacity: .45; pointer-events: none;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 1.5s; } }
   input, select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font: inherit; }
   label { font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
   .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
   .stages { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
+  .control-layout { display: grid; gap: 14px; }
+  .control-group { background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 12px; }
+  .control-group h3 { margin: 0 0 9px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .control-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 10px; }
+  .control-grid label { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+  .control-actions { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; padding-top: 2px; }
+  .schedule-list { display: grid; gap: 7px; margin-top: 10px; }
+  .schedule-item { display: flex; flex-wrap: wrap; align-items: center; gap: 7px 10px;
+    padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+  .stage-chip { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 5px 9px; color: var(--text); }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
   th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; }
-  tr:hover td { background: rgba(127,127,127,.06); }
+  button.table-sort { display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; background: none;
+    color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; text-align: left; }
+  button.table-sort:hover, button.table-sort.active { color: var(--text); }
+  .sort-indicator { display: inline-block; min-width: 1em; color: var(--accent); }
+  tr:hover td { background: var(--hover); }
   a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
   .table-wrap { overflow-x: auto; }
-  .hit { border-bottom: 1px solid var(--border); padding: 10px 0; }
+  .hit { border-bottom: 1px solid var(--border); padding: 12px 0; }
+  #review-items, #s-results, #s-institutions, #macro-list { width: 100%; max-width: 100ch; margin-inline: auto; }
+  #review-items .hit, #s-results .hit, #s-institutions .hit, #macro-list .hit { min-width: 0; overflow-wrap: anywhere; }
+  .numbered-hit { display: grid; grid-template-columns: 5.5ch minmax(0, 1fr); column-gap: 10px; height: 100%; }
+  .numbered-hit > .hit-content { min-width: 0; display: flex; flex-direction: column; }
+  .search-result { padding-inline: 10px; border-radius: 7px; transition: background-color .15s, box-shadow .15s; }
+  .search-result.viewed-details { background: color-mix(in srgb, var(--accent) 9%, transparent);
+    box-shadow: inset 3px 0 var(--accent); }
+  .search-result.viewed-source { background: color-mix(in srgb, var(--ok) 11%, transparent);
+    box-shadow: inset 3px 0 var(--ok); }
+  .view-marker { display: inline-flex; margin-left: 7px; vertical-align: middle; }
+  .view-level { display: inline-block; padding: 1px 7px; border: 1px solid currentColor; border-radius: 12px;
+    color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .view-level.details { color: var(--accent); }
+  .view-level.source { color: var(--ok); }
+  .verification-badge { display: inline-block; padding: 1px 7px; border: 1px solid currentColor;
+    border-radius: 12px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .verification-badge.verified { color: var(--ok); }
+  .verification-badge.probable { color: var(--warn); }
+  .verification-badge.reported { color: var(--err); }
+  .uncertainty-badge { display: inline-block; padding: 1px 7px; border: 1px solid currentColor;
+    border-radius: 12px; color: var(--warn); font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .uncertainty-badge.reason { color: var(--muted); }
+  .report-panel { margin-top: 8px; width: min(100%, 620px); }
+  .report-panel > summary { width: max-content; cursor: pointer; color: var(--muted); font-size: 12px; }
+  .report-form { display: grid; grid-template-columns: minmax(150px, .7fr) minmax(220px, 1.5fr) auto;
+    align-items: center; gap: 8px; margin-top: 7px; }
+  .view-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: -5px 0 8px; }
+  .hit-title { display: flex; gap: 8px; align-items: baseline; padding-right: 64px; }
+  .hit-number, .row-number { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .hit .meta { color: var(--muted); font-size: 12px; }
   .score { float: right; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .detail { margin-top: 8px; padding: 10px; background: var(--bg); border-radius: 8px; white-space: pre-wrap; font-size: 13px; }
+  .detail { margin: 8px 0 0 36px; padding: 12px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; white-space: pre-wrap; font-size: 13px; max-height: 300px; overflow-y: auto; }
+  .numbered-hit .detail { margin-left: 0; }
+  .search-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 10px; margin-top: 10px; }
+  .search-grid label { display: flex; flex-direction: column; align-items: stretch; gap: 3px; }
+  .search-grid .wide { grid-column: span 2; }
+  .filter-layout { display: grid; gap: 12px; margin-top: 12px; }
+  .filter-section { border: 1px solid var(--border); border-radius: 9px; padding: 12px; background: var(--bg); }
+  .filter-section h3 { margin: 0 0 9px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+  .filter-grid label { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+  .filter-grid .wide { grid-column: span 2; }
+  details.multi-select { position: relative; }
+  details.multi-select > summary { list-style: none; cursor: pointer; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  details.multi-select > summary::-webkit-details-marker { display: none; }
+  .check-menu { position: absolute; z-index: 10; top: calc(100% + 4px); left: 0; min-width: 100%; max-height: 260px;
+    overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 6px;
+    box-shadow: 0 8px 24px var(--shadow); }
+  .check-menu label { display: flex; flex-direction: row; align-items: center; padding: 5px 7px; white-space: nowrap; color: var(--text); }
+  .check-menu label:hover { background: var(--bg); border-radius: 5px; }
   .err-msg { color: var(--err); font-size: 13px; }
   .muted { color: var(--muted); }
+  .screen-badge { display:inline-block; border-radius:12px; padding:1px 8px; font-size:11px; font-weight:600; color:var(--status-fg); }
+  .screen-badge.pending { background:var(--muted); }
+  .screen-badge.eligible { background:var(--ok); }
+  .screen-badge.review { background:var(--warn); }
+  .screen-badge.rejected { background:var(--err); }
+  .screen-badge.quarantine { background:#7c3aed; }
+  .screen-actions { display:flex; flex-wrap:wrap; gap:7px; margin-top:9px; }
+  .numbered-hit .screen-actions { margin-top: auto; padding-top: 9px; }
+  .screen-description { white-space:pre-wrap; max-height:220px; overflow:auto; padding:10px; margin-top:8px;
+    background:var(--bg); border:1px solid var(--border); border-radius:8px; }
+  input, select, button, summary { color-scheme: inherit; }
+  input[type="checkbox"] { accent-color: var(--accent); }
+  input::placeholder { color: var(--muted); opacity: .8; }
+  :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  ::selection { background: var(--accent); color: var(--accent-fg); }
+  * { scrollbar-color: var(--scroll-thumb) var(--bg); scrollbar-width: thin; }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-track { background: var(--bg); }
+  *::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border: 2px solid var(--bg); border-radius: 10px; }
+  code { color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; }
+  @media (max-width: 650px) {
+    main { padding: 12px; }
+    .filter-grid .wide, .search-grid .wide { grid-column: span 1; }
+    .control-actions button { flex: 1 1 42%; }
+    .report-form { grid-template-columns: 1fr; }
+  }
+  @media (min-width: 900px) {
+    #cov-tiles { grid-template-columns: repeat(6, minmax(0, 240px)); }
+    #review-tiles { grid-template-columns: repeat(5, minmax(0, 240px)); }
+  }
+  @media (min-width: 1700px) {
+    #pipeline.active { display: grid; grid-template-columns: minmax(360px, .85fr) minmax(720px, 1.65fr);
+      gap: 16px; align-items: start; }
+    #pipeline > .card { margin-bottom: 0; }
+    #review.active { display: grid; grid-template-columns: minmax(360px, .8fr) minmax(0, 1.7fr);
+      gap: 16px; align-items: start; }
+    #review > .tiles { grid-column: 1 / -1; margin-bottom: 0; }
+    #review > .card { margin-bottom: 0; }
+    #macros.active { display: grid; grid-template-columns: minmax(460px, .9fr) minmax(0, 1.6fr);
+      gap: 16px; align-items: start; }
+    #macros > .card { margin-bottom: 0; }
+    #search .filter-layout { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1.6fr) minmax(0, .95fr);
+      align-items: start; }
+  }
+  @media (min-width: 2200px) {
+    #pipeline.active { grid-template-columns: minmax(440px, .65fr) minmax(0, 2.35fr); }
+    #review.active { grid-template-columns: minmax(440px, .65fr) minmax(0, 2.35fr); }
+    #macros.active { grid-template-columns: minmax(520px, .75fr) minmax(0, 2.25fr); }
+    #pipeline .control-layout { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    #pipeline .control-layout .control-group:first-child { grid-column: 1 / -1; }
+    #pipeline .control-actions { grid-column: 1 / -1; }
+    #review-items, #s-results, #s-institutions, #macro-list {
+      max-width: 204ch; display: grid; grid-template-columns: repeat(2, minmax(0, 100ch));
+      justify-content: center; column-gap: 28px; align-items: stretch;
+    }
+  }
 </style>
 </head>
 <body>
 <header>
-  <span id="health" class="dot"></span>
-  <h1>PhD Searcher</h1>
+  <span id="health" class="dot" title="API connection status"></span>
+  <h1>PHDBOT</h1>
   <span class="spacer"></span>
   <span id="updated"></span>
 </header>
-<nav>
-  <button data-tab="pipeline" class="active">Pipeline</button>
-  <button data-tab="coverage">Coverage</button>
-  <button data-tab="search">Search</button>
+<nav role="tablist" aria-label="PHDBOT sections">
+  <button id="tab-pipeline" role="tab" aria-controls="pipeline" aria-selected="true" data-tab="pipeline" class="active" title="Run, resume and monitor the data-processing pipeline">Pipeline</button>
+  <button id="tab-coverage" role="tab" aria-controls="coverage" aria-selected="false" tabindex="-1" data-tab="coverage" title="Inspect institution and source coverage">Coverage</button>
+  <button id="tab-review" role="tab" aria-controls="review" aria-selected="false" tabindex="-1" data-tab="review" title="Inspect or decide candidates that need human attention">Review</button>
+  <button id="tab-search" role="tab" aria-controls="search" aria-selected="false" tabindex="-1" data-tab="search" title="Search indexed opportunities by meaning and structured filters">Search</button>
+  <button id="tab-macros" role="tab" aria-controls="macros" aria-selected="false" tabindex="-1" data-tab="macros" title="Save repeatable refresh, search and export workflows">Macros</button>
 </nav>
 <main>
   <!-- PIPELINE -->
-  <section id="pipeline" class="tab active">
+  <section id="pipeline" class="tab active" role="tabpanel" aria-labelledby="tab-pipeline">
     <div class="card">
       <h2>Status</h2>
       <div id="pstatus" class="muted">loading…</div>
     </div>
     <div class="card">
       <h2>Controls</h2>
-      <div class="stages" id="stageboxes"></div>
-      <div class="controls">
-        <label>limit <input id="p-limit" type="number" min="1" style="width:90px" placeholder="all"></label>
-        <label>name <input id="p-name" type="text" placeholder="university ILIKE"></label>
-        <button class="act" id="btn-start">Start</button>
-        <button class="act ghost" id="btn-resume">Resume</button>
-        <button class="act ghost" id="btn-stop">Stop</button>
+      <div class="control-layout">
+        <div class="control-group">
+          <h3>Stages to run</h3>
+          <div class="stages" id="stageboxes"></div>
+          <div class="muted">Leave every stage unchecked to use the complete canonical pipeline.</div>
+        </div>
+        <div class="control-group">
+          <h3>Stage limits</h3>
+          <div class="control-grid">
+            <label title="Maximum institutions to import into the catalog; empty means all">Universities <input id="p-limit-universities" type="number" min="1" placeholder="all"></label>
+            <label title="Maximum institutions whose job and opportunities pages will be discovered">Discovery <input id="p-limit-discovery" type="number" min="1" placeholder="all"></label>
+            <label title="Maximum institutions for which extraction rules will be prepared">Extraction schemas <input id="p-limit-schema" type="number" min="1" placeholder="all"></label>
+            <label title="Maximum listing sources to scrape for candidate opportunities">Scrape sources <input id="p-limit-scrape" type="number" min="1" placeholder="all"></label>
+            <label title="Maximum scraped sources checked for malformed or irrelevant extraction">Quality sources <input id="p-limit-quality" type="number" min="1" placeholder="all"></label>
+            <label title="Maximum candidate positions triaged efficiently by the local model">Fast reviews <input id="p-limit-review" type="number" min="1" placeholder="all"></label>
+            <label title="Maximum targeted detail pages fetched for unresolved candidates">Evidence pages <input id="p-limit-evidence" type="number" min="1" placeholder="all"></label>
+            <label title="Maximum unresolved dossiers judged individually using their collected evidence">Deep reviews <input id="p-limit-review2" type="number" min="1" placeholder="all"></label>
+            <label title="Maximum eligible positions whose full details will be collected">Detail pages (eligible) <input id="p-limit-enrich" type="number" min="1" placeholder="all"></label>
+            <label title="Maximum related institutions or research groups to enrich">Institutions <input id="p-limit-institutions" type="number" min="1" placeholder="all"></label>
+            <label title="Maximum eligible positions written to the semantic search index">Index positions <input id="p-limit-index" type="number" min="1" placeholder="all"></label>
+          </div>
+        </div>
+        <div class="control-group">
+          <h3>Scope and pagination</h3>
+          <div class="control-grid">
+            <label title="Safety cap for paginated sources; empty continues until the first empty page">Pages per source <input id="p-max-pages" type="number" min="1" max="1500" placeholder="until empty"></label>
+            <label title="Optional case-insensitive institution-name filter for targeted runs">University name <input id="p-name" type="text" placeholder="optional name filter"></label>
+          </div>
+        </div>
+        <div class="control-group">
+          <h3>Scheduled start</h3>
+          <div class="control-grid">
+            <label title="Local wall-clock time interpreted explicitly in Europe/Rome">Start at (Europe/Rome)
+              <input id="p-schedule-at" type="datetime-local" step="60">
+            </label>
+            <div class="control-actions">
+              <button class="act ghost" id="btn-schedule" title="Persist this exact pipeline configuration and start it automatically at the selected time">Schedule this run</button>
+            </div>
+          </div>
+          <div id="p-schedules" class="schedule-list muted" aria-live="polite">No scheduled pipeline runs.</div>
+        </div>
+        <div class="control-actions">
+          <button class="act" id="btn-start" title="Start a new run using the selected stages and limits">Start new run</button>
+          <button class="act ghost" id="btn-resume" disabled title="Continue the interrupted run from its durable checkpoint">Resume interrupted run</button>
+          <button class="act ghost" id="btn-refresh" title="Collect sources and publish safe verified/probable results without waiting for optional model review">Collect &amp; publish</button>
+          <button class="act ghost" id="btn-stop" disabled title="Safely stop after the current checkpoint; the run can be resumed later">Stop current run</button>
+        </div>
       </div>
       <div id="pctrl-msg" class="err-msg" style="margin-top:10px"></div>
-      <p class="muted" style="margin:10px 0 0">No stage checked = full pipeline (canonical order). Only one run can be active across the cluster.</p>
+      <p class="muted" style="margin:10px 0 0">Empty limit = all for that stage. Scrape/quality count sources; fast/deep review count positions; evidence/detail count pages. <b>Collect &amp; publish</b> is the recommended useful-results path: it refreshes sources, applies hard quality rules and indexes verified plus clearly labelled probable leads without waiting for model review. Fast review, evidence, deep review and detail enrichment are optional precision passes. Empty pages/source = continue until the first empty page; a number is a test cap. Resume preserves durable cursors and retry budgets.</p>
     </div>
   </section>
 
   <!-- COVERAGE -->
-  <section id="coverage" class="tab">
+  <section id="coverage" class="tab" role="tabpanel" aria-labelledby="tab-coverage" hidden>
     <div class="tiles" id="cov-tiles"></div>
     <div class="card">
       <h2>Universities</h2>
-      <input id="cov-filter" type="text" placeholder="filter by name or country…" style="width:100%;margin-bottom:12px">
+      <div class="section-tools">
+        <input id="cov-filter" type="search" title="Filter by institution name, country code or full country name" placeholder="filter by name or country…">
+        <span id="cov-count" class="muted result-count" aria-live="polite"></span>
+      </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Country</th><th>University</th><th>Discovery</th><th>Pages ok/total</th><th>Positions</th><th></th></tr></thead>
+          <thead><tr>
+            <th class="row-number" title="Position in the current filtered and sorted list">#</th>
+            <th aria-sort="ascending"><button class="table-sort active" data-cov-sort="country" data-label="Country">Country <span class="sort-indicator" aria-hidden="true">▲</span></button></th>
+            <th aria-sort="none"><button class="table-sort" data-cov-sort="university" data-label="University">University <span class="sort-indicator" aria-hidden="true">↕</span></button></th>
+            <th aria-sort="none"><button class="table-sort" data-cov-sort="tier" data-label="Tier">Tier <span class="sort-indicator" aria-hidden="true">↕</span></button></th>
+            <th aria-sort="none"><button class="table-sort" data-cov-sort="discovery" data-label="Discovery">Discovery <span class="sort-indicator" aria-hidden="true">↕</span></button></th>
+            <th aria-sort="none"><button class="table-sort" data-cov-sort="pages" data-label="Pages OK/Total"><span>Pages<br>OK/Total</span> <span class="sort-indicator" aria-hidden="true">↕</span></button></th>
+            <th aria-sort="none"><button class="table-sort" data-cov-sort="quarantine" data-label="Quarantine">Quarantine <span class="sort-indicator" aria-hidden="true">↕</span></button></th>
+            <th aria-sort="none"><button class="table-sort" data-cov-sort="positions" data-label="Positions">Positions <span class="sort-indicator" aria-hidden="true">↕</span></button></th>
+            <th></th>
+          </tr></thead>
           <tbody id="cov-body"></tbody>
         </table>
       </div>
     </div>
   </section>
 
+  <!-- REVIEW -->
+  <section id="review" class="tab" role="tabpanel" aria-labelledby="tab-review" hidden>
+    <div class="tiles" id="review-tiles"></div>
+    <div class="card">
+      <h2>Candidate screening</h2>
+      <div class="controls">
+        <label>Status
+          <select id="review-status">
+            <option value="review">needs review</option>
+            <option value="rejected">rejected</option>
+            <option value="eligible">eligible</option>
+            <option value="pending">pending</option>
+            <option value="quarantine">quarantined extraction</option>
+            <option value="">all</option>
+          </select>
+        </label>
+        <button class="act ghost" id="btn-review-refresh">Refresh</button>
+        <button class="act ghost" id="btn-review-prev">Previous</button>
+        <button class="act ghost" id="btn-review-next">Next</button>
+        <span class="muted" id="review-page"></span>
+      </div>
+      <div class="controls" style="margin-top:10px">
+        <label title="Maximum candidates admitted to this automatic review run">Automatic review limit <input id="review-auto-limit" type="number" min="1" value="200" style="width:90px"></label>
+        <button class="act" id="btn-auto-review" title="Refine only this bounded sample; review is not required before a safe probable lead can be searched">Refine automatic sample</button>
+        <span class="muted">Optional precision pass: quality → fast review → targeted evidence → deep review. This count is a diagnostic pool, not a mandatory human inbox.</span>
+      </div>
+      <p class="muted">Nothing is deleted. Approve sends a candidate to the next enrich/index pass; Reject keeps it auditable but out of search. Manual decisions are preserved on refresh.</p>
+      <div id="review-msg" class="err-msg" role="status" aria-live="polite"></div>
+    </div>
+    <div class="card">
+      <div id="review-items" class="muted" aria-live="polite">Open this tab to load candidates.</div>
+    </div>
+  </section>
+
   <!-- SEARCH -->
-  <section id="search" class="tab">
+  <section id="search" class="tab" role="tabpanel" aria-labelledby="tab-search" hidden>
     <div class="card">
       <h2>Semantic search</h2>
       <div class="controls">
-        <input id="s-query" type="text" placeholder="e.g. machine learning for climate" style="flex:1;min-width:240px">
-        <input id="s-country" type="text" placeholder="country (IT)" style="width:110px">
-        <input id="s-univ" type="text" placeholder="university (exact)" style="width:170px">
-        <label>after <input id="s-deadline" type="date"></label>
-        <label>limit <input id="s-limit" type="number" min="1" max="100" value="10" style="width:80px"></label>
-        <button class="act" id="btn-search">Search</button>
+        <input id="s-query" type="text" title="Describe the subject or opportunity you are looking for in natural language" placeholder="e.g. machine learning for climate" style="flex:1;min-width:240px">
+        <button class="act" id="btn-search" title="Rank indexed opportunities by semantic relevance, then apply the filters below">Search</button>
+        <select id="s-export-format" title="Portable format used to share the current result set"><option value="html">HTML</option><option value="pdf">PDF</option><option value="csv">CSV</option><option value="json">JSON</option></select>
+        <button class="act ghost" id="btn-export" disabled title="Export the current search results and active filters">Export</button>
       </div>
-      <div id="s-msg" class="err-msg" style="margin-top:10px"></div>
+      <div class="filter-layout">
+        <div class="filter-section">
+          <h3>Where and what</h3>
+          <div class="filter-grid">
+            <label>Countries
+              <details class="multi-select" id="s-country-select"><summary id="s-country-summary">All countries</summary><div class="check-menu" id="s-country-menu"></div></details>
+            </label>
+            <label class="wide">Universities / institutions
+              <details class="multi-select" id="s-univ-select"><summary id="s-univ-summary">All institutions</summary><div class="check-menu" id="s-univ-menu"></div></details>
+            </label>
+            <label class="wide">Position types
+              <details class="multi-select" id="s-type-select"><summary id="s-type-summary">All position types</summary><div class="check-menu" id="s-type-menu"></div></details>
+            </label>
+          </div>
+        </div>
+        <div class="filter-section">
+          <h3>Dates and compensation</h3>
+          <div class="filter-grid">
+            <label>Deadline from <input id="s-deadline-from" type="date"></label>
+            <label>Deadline to <input id="s-deadline-to" type="date"></label>
+            <label>Published from <input id="s-posted-from" type="date"></label>
+            <label>Published to <input id="s-posted-to" type="date"></label>
+            <label title="Minimum compensation in EUR equivalent">Minimum pay (€ equiv.) <input id="s-comp-min" type="number" min="0" step="any" placeholder="any"></label>
+          </div>
+        </div>
+        <div class="filter-section">
+          <h3>Relevance and result order</h3>
+          <div class="filter-grid">
+            <label title="Exclude results below this semantic similarity threshold">Minimum relevance <input id="s-min-score" type="number" min="-1" max="1" step="0.05" value="0.50"></label>
+            <label title="Choose the field used to order the filtered matches">Order by <select id="s-sort"><option value="relevance">relevance</option><option value="uncertainty">uncertainty</option><option value="compensation">compensation</option><option value="posted">publication date</option><option value="deadline">deadline</option><option value="country">country</option></select></label>
+            <label title="Choose ascending or descending result order">Direction <select id="s-order"><option value="desc">descending</option><option value="asc">ascending</option></select></label>
+            <label title="Optional display cap; empty returns every match above the relevance threshold">Maximum results <input id="s-limit" type="number" min="1" placeholder="all"></label>
+            <label title="Probable results pass hard safety checks but may still contain explicitly labelled uncertainty">Verification <select id="s-mode"><option value="include_probable">verified + probable</option><option value="verified_only">verified only</option></select></label>
+            <label title="Heuristic audit score, not a statistical probability. The 60% default includes useful title-grounded leads while hiding legacy verdicts without auditable evidence">Maximum uncertainty (%) <input id="s-max-uncertainty" type="number" min="0" max="100" step="5" value="60" placeholder="all"></label>
+            <label title="Reported items are hidden in this browser by default"><span><input id="s-show-reported" type="checkbox"> show reported items</span></label>
+          </div>
+        </div>
+      </div>
+      <div class="controls" style="margin-top:10px">
+        <button class="act ghost" id="btn-search-reset" title="Clear all structured filters while keeping the semantic query">Reset filters</button>
+      </div>
+      <p class="muted" style="margin:10px 0 0">The 60% default includes useful title-grounded leads. Set 85% (or leave empty) to inspect legacy positives whose final verification evidence is unavailable. Uncertainty is a transparent heuristic tier, not a calibrated probability. Publication date, duration and compensation appear when exposed by the source.</p>
+      <div id="s-msg" class="err-msg" role="status" aria-live="polite" style="margin-top:10px"></div>
+    </div>
+    <div class="card" id="s-institutions-card" style="display:none">
+      <h2>Related universities &amp; research groups</h2>
+      <div id="s-institutions"></div>
     </div>
     <div class="card" id="s-results-card" style="display:none">
       <h2>Results</h2>
+      <div class="view-legend" title="Viewing state is saved in this browser and reused in future searches">
+        <span class="view-level details">Details viewed</span><span class="view-level source">Source opened</span>
+        <span class="muted">remembered on this browser</span>
+      </div>
       <div id="s-results"></div>
     </div>
+  </section>
+
+  <!-- MACROS -->
+  <section id="macros" class="tab" role="tabpanel" aria-labelledby="tab-macros" hidden>
+    <div class="card">
+      <h2>Saved workflows</h2>
+      <p class="muted">A macro can run an incremental full refresh, repeat the current Search query and save portable reports under <code>exports/</code>. Pipeline checkpoints remain durable.</p>
+      <div class="search-grid">
+        <label>Name <input id="m-name" maxlength="160" placeholder="e.g. Swiss design positions"></label>
+        <label class="wide">Description <input id="m-description" maxlength="2000" placeholder="optional"></label>
+        <label>Destination subfolder <input id="m-destination" maxlength="512" placeholder="shared/design"></label>
+        <label><span><input id="m-refresh" type="checkbox" checked> refresh sources first</span></label>
+        <label><span><input class="m-format" type="checkbox" value="html" checked> HTML</span></label>
+        <label><span><input class="m-format" type="checkbox" value="pdf"> PDF</span></label>
+        <label><span><input class="m-format" type="checkbox" value="csv"> CSV</span></label>
+        <label><span><input class="m-format" type="checkbox" value="json"> JSON</span></label>
+      </div>
+      <div class="controls" style="margin-top:12px">
+        <button class="act" id="btn-macro-save" disabled>Save current search as macro</button>
+        <button class="act ghost" id="btn-macro-refresh">Refresh list</button>
+      </div>
+      <div id="macro-msg" class="err-msg" style="margin-top:10px"></div>
+    </div>
+    <div class="card"><div id="macro-list" class="muted">No macros loaded.</div></div>
   </section>
 </main>
 
 <script>
 const $ = s => document.querySelector(s);
+const loadingMarkup = label => `<div class="panel-loading" role="status"><span class="spinner" aria-hidden="true"></span>${esc(label)}</div>`;
 const api = async (path, opts) => {
   const r = await fetch(path, opts);
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(body.detail || `${r.status} ${r.statusText}`);
   return body;
 };
-const fmtSecs = s => s == null ? "—" : s < 60 ? `${Math.round(s)}s` : `${Math.floor(s/60)}m ${Math.round(s%60)}s`;
+const fmtSecs = s => s == null ? "—" : s < 60 ? `${Math.round(s)}s` : s < 3600
+  ? `${Math.floor(s/60)}m ${Math.round(s%60)}s`
+  : `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
+const utcDate = s => {
+  if (!s) return null;
+  return new Date(/[zZ]$|[+-]\d\d:\d\d$/.test(s) ? s : `${s}Z`);
+};
+const fmtDate = s => s ? utcDate(s).toLocaleString(undefined, {timeZoneName:"short"}) : "—";
+const fmtRomeDate = s => s ? utcDate(s).toLocaleString(undefined, {
+  timeZone:"Europe/Rome", timeZoneName:"short",
+}) : "—";
+const fmtCountdown = s => {
+  const seconds = Math.max(0, (utcDate(s).getTime() - Date.now()) / 1000);
+  return seconds < 1 ? "due now" : `in ${fmtSecs(seconds)}`;
+};
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const flag = code => /^[A-Za-z]{2}$/.test(code || "")
+  ? String.fromCodePoint(...code.toUpperCase().split("").map(c => 127397 + c.charCodeAt(0))) : "🌐";
+const dateOnly = value => value ? String(value).slice(0, 10) : "—";
+const amountFmt = new Intl.NumberFormat("it-IT", {maximumFractionDigits: 0});
+const regionNames = new Intl.DisplayNames([navigator.language || "it"], {type: "region"});
+const countryName = code => {
+  const normalized = String(code || "").toUpperCase();
+  if (!/^[A-Z]{2}$/.test(normalized)) return normalized || "Unknown country";
+  return regionNames.of(normalized) || normalized;
+};
+const countryMark = code => {
+  const normalized = String(code || "").toUpperCase();
+  return `<span class="country-mark" title="${esc(countryName(normalized))}">${flag(normalized)} ${esc(normalized || "—")}</span>`;
+};
+const RESULT_VIEWS_KEY = "phdbot.resultViews.v1";
+const RESULT_VIEW_RANK = {details: 1, source: 2};
+let resultViews = (() => {
+  try {
+    const stored = JSON.parse(localStorage.getItem(RESULT_VIEWS_KEY) || "{}");
+    return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+  } catch { return {}; }
+})();
+const resultView = id => resultViews[String(id)] || null;
+const resultViewClass = id => resultView(id)?.level ? ` viewed-${resultView(id).level}` : "";
+const resultViewBadge = id => {
+  const viewed = resultView(id);
+  if (!viewed) return "";
+  const source = viewed.level === "source";
+  const label = source ? "Source opened" : "Details viewed";
+  const when = viewed.at ? new Date(viewed.at).toLocaleString() : "previously";
+  return `<span class="view-level ${source ? "source" : "details"}" title="${esc(label)}: ${esc(when)}">${label}</span>`;
+};
+function markResultViewed(id, level) {
+  const key = String(id);
+  const previous = resultViews[key];
+  if (!previous || RESULT_VIEW_RANK[level] > (RESULT_VIEW_RANK[previous.level] || 0)) {
+    resultViews[key] = {level, at: new Date().toISOString()};
+    try { localStorage.setItem(RESULT_VIEWS_KEY, JSON.stringify(resultViews)); } catch {}
+  }
+  const viewed = resultViews[key];
+  document.querySelectorAll(`[data-position-id="${key}"]`).forEach(row => {
+    row.classList.remove("viewed-details", "viewed-source");
+    row.classList.add(`viewed-${viewed.level}`);
+    const marker = row.querySelector(".view-marker");
+    if (marker) marker.innerHTML = resultViewBadge(id);
+  });
+}
+window.markResultViewed = markResultViewed;
+const compensation = h => {
+  let native = h.compensation;
+  if (!native && h.compensation_max != null) {
+    const range = h.compensation_min != null && h.compensation_min !== h.compensation_max
+      ? `${amountFmt.format(h.compensation_min)}–` : "";
+    native = `${range}${amountFmt.format(h.compensation_max)} ${h.compensation_currency || ""}${h.compensation_period ? "/" + h.compensation_period : ""}`.trim();
+  }
+  if (!native) return "—";
+  return h.compensation_currency && h.compensation_currency !== "EUR" && h.compensation_eur_max != null
+    ? `${native} (${amountFmt.format(h.compensation_eur_max)}€)` : native;
+};
 
 // tabs
-document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
-  document.querySelectorAll("nav button").forEach(x => x.classList.toggle("active", x === b));
-  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.id === b.dataset.tab));
-  if (b.dataset.tab === "coverage") loadCoverage();
+const TAB_KEY = "phdbot.activeTab.v1";
+const tabButtons = [...document.querySelectorAll("nav [role=tab]")];
+function activateTab(name, {focus = false, remember = true} = {}) {
+  const selected = tabButtons.find(button => button.dataset.tab === name) || tabButtons[0];
+  tabButtons.forEach(button => {
+    const active = button === selected;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
+  document.querySelectorAll(".tab").forEach(panel => {
+    const active = panel.id === selected.dataset.tab;
+    panel.classList.toggle("active", active);
+    panel.hidden = !active;
+  });
+  if (remember) {
+    try { localStorage.setItem(TAB_KEY, selected.dataset.tab); } catch {}
+    history.replaceState(null, "", `#${selected.dataset.tab}`);
+  }
+  if (focus) selected.focus();
+  if (selected.dataset.tab === "coverage") loadCoverage();
+  if (selected.dataset.tab === "review") loadReview(false);
+  if (selected.dataset.tab === "search") loadSearchFacets();
+  if (selected.dataset.tab === "macros") loadMacros();
+}
+tabButtons.forEach((button, index) => {
+  button.onclick = () => activateTab(button.dataset.tab);
+  button.onkeydown = event => {
+    let target = null;
+    if (event.key === "ArrowRight") target = tabButtons[(index + 1) % tabButtons.length];
+    if (event.key === "ArrowLeft") target = tabButtons[(index - 1 + tabButtons.length) % tabButtons.length];
+    if (event.key === "Home") target = tabButtons[0];
+    if (event.key === "End") target = tabButtons.at(-1);
+    if (!target) return;
+    event.preventDefault();
+    activateTab(target.dataset.tab, {focus: true});
+  };
 });
 
 // ---- pipeline ----
-const STAGES = ["universities", "euraxess", "discovery", "schema", "scrape", "index"];
+const STAGE_META = {
+  universities: ["Universities", "Build or refresh the two-tier European higher-education catalog."],
+  euraxess: ["EURAXESS sources", "Register EURAXESS as a shared, paginated opportunity source."],
+  discovery: ["Source discovery", "Find official vacancies, jobs and opportunities pages for each institution."],
+  schema: ["Extraction schemas", "Prepare the rules used to recognize listings and fields on discovered pages."],
+  scrape: ["Scrape listings", "Collect candidate opportunities from listing pages; rate-limited pages are deferred safely."],
+  quality: ["Quality gate", "Detect broken extraction and obvious non-opportunities before model review."],
+  review: ["Fast review", "Efficiently triage candidates with rules and batched local-model review."],
+  evidence: ["Evidence collection", "Fetch targeted detail pages only for candidates that remain unresolved."],
+  review2: ["Deep review", "Judge unresolved candidates individually using the collected evidence."],
+  enrich: ["Detail enrichment", "Collect complete details for eligible opportunities."],
+  institutions: ["Institution enrichment", "Build related institution and research-group information for search."],
+  index: ["Search indexing", "Write eligible positions to the semantic search index."],
+};
+const STAGES = Object.keys(STAGE_META);
+// Recommended time-to-first-results path. Model review and detail enrichment
+// remain explicit, bounded refinement passes instead of blocking publication.
+const PUBLISH_STAGES = ["universities", "euraxess", "discovery", "schema", "scrape", "quality", "index", "institutions"];
+const stageLabel = stage => STAGE_META[stage]?.[0] || stage;
+const stageHelp = stage => STAGE_META[stage]?.[1] || "Pipeline stage";
 $("#stageboxes").innerHTML = STAGES.map(s =>
-  `<label><input type="checkbox" value="${s}"> ${s}</label>`).join("");
+  `<label class="stage-chip" title="${esc(stageHelp(s))}"><input type="checkbox" value="${s}"> ${esc(stageLabel(s))}</label>`).join("");
 
 function renderStatus(st) {
   const cur = st.current_stage;
-  const pct = cur && cur.total ? Math.round(100 * cur.done / cur.total) : 0;
+  const pct = cur && cur.total ? Math.min(100, Math.round(100 * cur.done / cur.total)) : 0;
+  const queue = cur && cur.deferred_queue;
+  const queuePct = queue && queue.total
+    ? Math.min(100, Math.round(100 * queue.processed / queue.total)) : 0;
+  const queueState = !queue ? "" : queue.remaining === 0 ? "queue completed"
+    : queue.retry_in_seconds != null && queue.retry_in_seconds > 0
+      ? `cooldown · next retry in ${fmtSecs(queue.retry_in_seconds)} (${fmtDate(queue.cooldown_until)})`
+      : "retrying now";
   $("#pstatus").innerHTML = `
     <div class="row"><span class="badge ${esc(st.state)}">${esc(st.state)}</span>
       ${st.run_id != null ? `<span class="muted">run #${st.run_id}</span>` : ""}</div>
     ${cur ? `
-      <div class="row"><b>stage</b> ${esc(cur.name)} — ${cur.done}${cur.total != null ? "/"+cur.total : ""}
+      <div class="row"><b title="Current pipeline stage">stage</b>
+        <span title="${esc(stageHelp(cur.name))}">${esc(stageLabel(cur.name))}</span> — ${cur.done}${cur.total != null ? "/"+cur.total : ""}
         ${cur.current ? `<span class="muted">· ${esc(cur.current)}</span>` : ""}</div>
-      <div class="progress"><div style="width:${pct}%"></div></div>
-      <div class="row"><b>avg</b> ${fmtSecs(cur.avg_seconds)} <b>eta</b> ${fmtSecs(cur.eta_seconds)}</div>` : ""}
-    <div class="row"><b>done</b> ${Object.entries(st.stages_done).map(([k,v]) => `${esc(k)}:${v}`).join(", ") || "—"}</div>
-    <div class="row"><b>pending</b> ${st.stages_pending.map(esc).join(", ") || "—"}</div>
-    <div class="row"><b>started</b> ${st.started_at ? new Date(st.started_at).toLocaleString() : "—"}
-      <b>finished</b> ${st.finished_at ? new Date(st.finished_at).toLocaleString() : "—"}</div>
+      <div class="progress" role="progressbar" aria-label="${esc(stageLabel(cur.name))} progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><div style="width:${pct}%"></div></div>
+      <div class="row"><b title="Average processing time per completed unit in this stage">avg</b> ${fmtSecs(cur.avg_seconds)}
+        <b title="Estimated time remaining at the current average speed">eta</b> ${fmtSecs(cur.eta_seconds)}</div>
+      ${queue ? `<div class="queue-box">
+        <div class="row"><b>deferred queue</b> ${queue.processed}/${queue.total} processed
+          <span class="muted">· ${queue.remaining} remaining</span></div>
+        <div class="progress" role="progressbar" aria-label="Deferred queue progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${queuePct}"><div style="width:${queuePct}%"></div></div>
+        <div class="row"><b>source</b> ${esc(queue.source)}
+          <b>status</b> ${esc(queueState)}
+          <b>429 streak</b> ${queue.rate_limit_streak}</div>
+      </div>` : ""}` : ""}
+    <div class="row"><b title="Stages already completed in this run">done</b> ${Object.entries(st.stages_done).map(([k,v]) => `${esc(stageLabel(k))}:${v}`).join(", ") || "—"}</div>
+    <div class="row"><b title="Stages still to be run, including the current stage">pending</b> ${st.stages_pending.map(s => esc(stageLabel(s))).join(", ") || "—"}</div>
+    <div class="row"><b>started</b> ${fmtDate(st.started_at)}
+      <b>finished</b> ${fmtDate(st.finished_at)}
+      <b title="Time spent running; stopped intervals are excluded">active time</b> ${fmtSecs(st.active_seconds)}</div>
     ${st.error ? `<div class="row err-msg"><b>error</b> ${esc(st.error)}</div>` : ""}`;
   const active = st.state === "running" || st.state === "stopping";
+  const resumable = st.state === "stopped" || st.state === "failed";
+  const canStop = st.state === "running";
   $("#btn-start").disabled = active;
-  $("#btn-stop").disabled = !active;
-  $("#btn-resume").disabled = active;
+  $("#btn-refresh").disabled = active;
+  $("#btn-resume").disabled = !resumable;
+  $("#btn-stop").disabled = !canStop;
+  $("#btn-auto-review").disabled = active;
+  $("#btn-start").classList.toggle("ghost", resumable);
+  $("#btn-resume").classList.toggle("ghost", !resumable);
+  $("#btn-stop").classList.toggle("danger", canStop);
+  $("#btn-stop").classList.toggle("ghost", !canStop);
 }
 
 async function poll() {
@@ -184,7 +660,10 @@ async function poll() {
   } catch { $("#health").className = "dot err"; $("#health").title = "API unreachable"; }
   try {
     renderStatus(await api("/v1/pipeline/status"));
-    $("#updated").textContent = "updated " + new Date().toLocaleTimeString();
+    await loadSchedules();
+    const updatedAt = new Date();
+    $("#updated").textContent = "updated " + updatedAt.toLocaleTimeString();
+    $("#updated").title = `Last successful status update: ${updatedAt.toLocaleString()}`;
   } catch (e) { $("#pstatus").innerHTML = `<span class="err-msg">${esc(e.message)}</span>`; }
 }
 
@@ -193,79 +672,730 @@ async function pipelineAction(path, body) {
   try { renderStatus(await api(path, body ? {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(body)} : {method:"POST"})); }
   catch (e) { $("#pctrl-msg").textContent = e.message; }
 }
-$("#btn-start").onclick = () => {
+function pipelineBodyFromControls() {
   const stages = [...document.querySelectorAll("#stageboxes input:checked")].map(c => c.value);
-  const limit = $("#p-limit").value ? +$("#p-limit").value : null;
+  const numberOrNull = id => $(id).value ? +$(id).value : null;
+  const limits = {
+    universities: numberOrNull("#p-limit-universities"),
+    discovery: numberOrNull("#p-limit-discovery"),
+    schema: numberOrNull("#p-limit-schema"),
+    scrape: numberOrNull("#p-limit-scrape"),
+    quality: numberOrNull("#p-limit-quality"),
+    review: numberOrNull("#p-limit-review"),
+    evidence: numberOrNull("#p-limit-evidence"),
+    review2: numberOrNull("#p-limit-review2"),
+    enrich: numberOrNull("#p-limit-enrich"),
+    institutions: numberOrNull("#p-limit-institutions"),
+    index: numberOrNull("#p-limit-index"),
+  };
+  const max_pages = $("#p-max-pages").value ? +$("#p-max-pages").value : null;
   const name = $("#p-name").value.trim() || null;
-  pipelineAction("/v1/pipeline/start", {stages: stages.length ? stages : null, limit, name});
+  return {stages: stages.length ? stages : null, limits, max_pages, name};
+}
+$("#btn-start").onclick = () => pipelineAction("/v1/pipeline/start", pipelineBodyFromControls());
+$("#btn-stop").onclick = () => {
+  if (confirm("Stop the current run safely after its current checkpoint? You can resume it later.")) {
+    pipelineAction("/v1/pipeline/stop");
+  }
 };
-$("#btn-stop").onclick = () => pipelineAction("/v1/pipeline/stop");
 $("#btn-resume").onclick = () => pipelineAction("/v1/pipeline/resume");
+$("#btn-refresh").onclick = () => {
+  if (confirm("Collect all sources and publish verified plus labelled probable leads? Optional model review is deliberately deferred.")) {
+    pipelineAction("/v1/pipeline/start", {stages:PUBLISH_STAGES, limits:{}, max_pages:null, name:null});
+  }
+};
+
+const romeParts = date => Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+  timeZone:"Europe/Rome", year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", hourCycle:"h23",
+}).formatToParts(date).filter(part => part.type !== "literal").map(part => [part.type, part.value]));
+const nextRomeEvening = () => {
+  const now = new Date();
+  let parts = romeParts(now);
+  let candidate = `${parts.year}-${parts.month}-${parts.day}T19:00`;
+  const current = `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+  if (candidate <= current) {
+    parts = romeParts(new Date(now.getTime() + 26 * 3600 * 1000));
+    candidate = `${parts.year}-${parts.month}-${parts.day}T19:00`;
+  }
+  return candidate;
+};
+$("#p-schedule-at").value = nextRomeEvening();
+
+let scheduleCache = [];
+const scheduleTiming = job => job.state === "waiting_pipeline" && job.next_attempt_at
+  ? `retry ${fmtCountdown(job.next_attempt_at)}`
+  : ["scheduled", "starting"].includes(job.state)
+  ? fmtCountdown(job.run_at)
+  : job.state === "running" ? `started ${fmtDate(job.started_at)}`
+  : `finished ${fmtDate(job.finished_at)}`;
+const scheduleMarkup = job => `<div class="schedule-item" id="schedule-${job.id}">
+  <span class="badge ${esc(job.state)}">${esc(job.state.replaceAll("_", " "))}</span>
+  <b>#${job.id}</b>
+  <span>${esc(fmtRomeDate(job.run_at))} <span class="muted">· Europe/Rome · ${esc(scheduleTiming(job))}</span></span>
+  ${job.pipeline_run_id != null ? `<span class="muted">· pipeline #${job.pipeline_run_id}</span>` : ""}
+  ${job.error ? `<span class="muted">· ${esc(job.error)}</span>` : ""}
+  ${["scheduled", "waiting_pipeline"].includes(job.state) ? `<button class="act ghost" onclick="cancelSchedule(${job.id})">Cancel</button>` : ""}
+</div>`;
+function renderPipelineSchedules() {
+  const jobs = scheduleCache.filter(job => job.target === "pipeline").slice(0, 8);
+  $("#p-schedules").innerHTML = jobs.length ? jobs.map(scheduleMarkup).join("") : "No scheduled pipeline runs.";
+}
+function renderMacroScheduleStates() {
+  document.querySelectorAll("[data-macro-schedules]").forEach(container => {
+    const macroId = Number(container.dataset.macroSchedules);
+    const jobs = scheduleCache.filter(job => job.target === "macro" && job.macro_id === macroId).slice(0, 5);
+    container.innerHTML = jobs.length ? jobs.map(scheduleMarkup).join("") : `<span class="muted">No scheduled runs.</span>`;
+  });
+}
+async function loadSchedules() {
+  try {
+    scheduleCache = await api("/v1/schedules?limit=100");
+    renderPipelineSchedules();
+    renderMacroScheduleStates();
+  } catch (e) {
+    $("#p-schedules").innerHTML = `<span class="err-msg">${esc(e.message)}</span>`;
+  }
+}
+$("#btn-schedule").onclick = async () => {
+  const runAt = $("#p-schedule-at").value;
+  if (!runAt) { $("#pctrl-msg").textContent = "choose a Europe/Rome start time"; return; }
+  try {
+    const job = await api("/v1/schedules", {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({
+      target:"pipeline", run_at:runAt, timezone:"Europe/Rome", pipeline:pipelineBodyFromControls(),
+    })});
+    $("#pctrl-msg").textContent = `scheduled job #${job.id} for ${fmtRomeDate(job.run_at)}`;
+    await loadSchedules();
+  } catch (e) { $("#pctrl-msg").textContent = e.message; }
+};
+async function cancelSchedule(id) {
+  try {
+    await api(`/v1/schedules/${id}/cancel`, {method:"POST"});
+    await loadSchedules();
+  } catch (e) { $("#pctrl-msg").textContent = e.message; $("#macro-msg").textContent = e.message; }
+}
+window.cancelSchedule = cancelSchedule;
 
 // ---- coverage ----
 let covData = [];
+let coverageLoadToken = 0;
+const covCollator = new Intl.Collator(navigator.language || "en", {numeric: true, sensitivity: "base"});
+let covSort = {key: "country", direction: "asc"};
+const covSortValue = (university, key) => {
+  if (key === "country") return university.country || "";
+  if (key === "university") return university.name || "";
+  if (key === "tier") return university.catalog_tier || "";
+  if (key === "discovery") return university.discovery_status || "";
+  if (key === "pages") {
+    const total = Number(university.listing_pages_count) || 0;
+    const ok = Number(university.listing_pages_ok) || 0;
+    return [total ? ok / total : -1, ok, total];
+  }
+  if (key === "quarantine") return [Number(university.positions_quarantined) || 0, Number(university.listing_pages_quarantined) || 0];
+  if (key === "positions") return Number(university.positions_count) || 0;
+  return "";
+};
+const compareCovValues = (left, right) => {
+  if (Array.isArray(left) && Array.isArray(right)) {
+    for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+      const compared = compareCovValues(left[index], right[index]);
+      if (compared) return compared;
+    }
+    return 0;
+  }
+  if (typeof left === "number" && typeof right === "number") return left - right;
+  return covCollator.compare(String(left ?? ""), String(right ?? ""));
+};
+function updateCoverageSortHeaders() {
+  document.querySelectorAll("[data-cov-sort]").forEach(button => {
+    const active = button.dataset.covSort === covSort.key;
+    button.classList.toggle("active", active);
+    button.querySelector(".sort-indicator").textContent = active ? (covSort.direction === "asc" ? "▲" : "▼") : "↕";
+    button.closest("th").setAttribute("aria-sort", active ? (covSort.direction === "asc" ? "ascending" : "descending") : "none");
+    button.setAttribute("aria-label", `${button.dataset.label}: ${active ? `sorted ${covSort.direction === "asc" ? "ascending" : "descending"}; activate to reverse` : "activate to sort"}`);
+    button.title = active ? `Sorted ${covSort.direction === "asc" ? "ascending" : "descending"}; click to reverse` : `Sort by ${button.dataset.label}`;
+  });
+}
 async function loadCoverage() {
+  const token = ++coverageLoadToken;
+  $("#coverage").setAttribute("aria-busy", "true");
+  $("#cov-tiles").innerHTML = loadingMarkup("Loading coverage…");
+  $("#cov-body").innerHTML = `<tr><td colspan="9">${loadingMarkup("Loading institutions…")}</td></tr>`;
   try {
-    covData = (await api("/v1/universities")).universities;
+    const data = (await api("/v1/universities")).universities;
+    if (token !== coverageLoadToken) return;
+    covData = data;
     const sum = k => covData.reduce((a, u) => a + u[k], 0);
     const withPos = covData.filter(u => u.positions_count > 0).length;
+    const specialists = covData.filter(u => u.catalog_tier === "specialist").length;
     $("#cov-tiles").innerHTML = [
-      ["Universities", covData.length], ["With positions", withPos],
+      ["Institutions", covData.length], ["Specialist", specialists], ["With positions", withPos],
       ["Positions", sum("positions_count")],
+      ["Quarantined", sum("positions_quarantined")],
       ["Listing pages", `${sum("listing_pages_ok")}/${sum("listing_pages_count")}`],
     ].map(([l, n]) => `<div class="tile"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
     renderCoverage();
-  } catch (e) { $("#cov-tiles").innerHTML = `<span class="err-msg">${esc(e.message)}</span>`; }
+  } catch (e) {
+    if (token !== coverageLoadToken) return;
+    $("#cov-tiles").innerHTML = `<span class="err-msg">${esc(e.message)}</span>`;
+    $("#cov-body").innerHTML = `<tr><td colspan="9" class="err-msg">Could not load institutions.</td></tr>`;
+  } finally {
+    if (token === coverageLoadToken) $("#coverage").setAttribute("aria-busy", "false");
+  }
 }
 function renderCoverage() {
   const f = $("#cov-filter").value.toLowerCase();
-  const rows = covData.filter(u => !f || u.name.toLowerCase().includes(f) || u.country.toLowerCase().includes(f));
-  $("#cov-body").innerHTML = rows.map(u => `<tr>
-    <td>${esc(u.country)}</td><td>${esc(u.name)}</td><td>${esc(u.discovery_status)}</td>
-    <td>${u.listing_pages_ok}/${u.listing_pages_count}</td><td>${u.positions_count}</td>
+  let rows = covData.filter(u => !f || u.name.toLowerCase().includes(f)
+    || String(u.country || "").toLowerCase().includes(f) || countryName(u.country).toLowerCase().includes(f));
+  const direction = covSort.direction === "asc" ? 1 : -1;
+  rows = [...rows].sort((left, right) => direction * (
+    compareCovValues(covSortValue(left, covSort.key), covSortValue(right, covSort.key))
+    || covCollator.compare(left.name || "", right.name || "")
+  ));
+  $("#cov-count").textContent = rows.length === covData.length ? `${rows.length}` : `${rows.length} of ${covData.length}`;
+  updateCoverageSortHeaders();
+  $("#cov-body").innerHTML = rows.map((u, index) => `<tr>
+    <td class="row-number">${index + 1}.</td><td>${countryMark(u.country)}</td><td>${esc(u.name)}</td><td title="${esc(u.catalog_basis)}">${esc(u.catalog_tier)}</td><td>${esc(u.discovery_status)}</td>
+    <td>${u.listing_pages_ok}/${u.listing_pages_count}</td><td>${u.listing_pages_quarantined} pages · ${u.positions_quarantined} items</td><td>${u.positions_count}</td>
     <td><a href="${esc(u.website_url)}" target="_blank" rel="noopener">site ↗</a></td></tr>`).join("")
-    || `<tr><td colspan="6" class="muted">no matches</td></tr>`;
+    || `<tr><td colspan="9" class="muted">no matches</td></tr>`;
 }
 $("#cov-filter").oninput = renderCoverage;
+document.querySelectorAll("[data-cov-sort]").forEach(button => button.onclick = () => {
+  const key = button.dataset.covSort;
+  if (covSort.key === key) covSort.direction = covSort.direction === "asc" ? "desc" : "asc";
+  else covSort = {key, direction: ["pages", "quarantine", "positions"].includes(key) ? "desc" : "asc"};
+  renderCoverage();
+});
 
-// ---- search ----
-$("#btn-search").onclick = doSearch;
-$("#s-query").addEventListener("keydown", e => { if (e.key === "Enter") doSearch(); });
-async function doSearch() {
-  $("#s-msg").textContent = "";
-  const q = $("#s-query").value.trim();
-  if (!q) { $("#s-msg").textContent = "query required"; return; }
-  const body = {
-    query: q,
-    country: $("#s-country").value.trim() || null,
-    university: $("#s-univ").value.trim() || null,
-    deadline_after: $("#s-deadline").value || null,
-    limit: +$("#s-limit").value || 10,
-  };
+// ---- screening review ----
+const REVIEW_LIMIT = 50;
+let reviewOffset = 0;
+let reviewTotal = 0;
+let reviewLoadToken = 0;
+
+async function loadReview(reset = false) {
+  if (reset) reviewOffset = 0;
+  const token = ++reviewLoadToken;
+  $("#review-msg").textContent = "";
+  $("#review").setAttribute("aria-busy", "true");
+  $("#review-items").innerHTML = loadingMarkup("Loading candidates…");
+  $("#btn-review-refresh").disabled = true;
+  $("#btn-review-prev").disabled = true;
+  $("#btn-review-next").disabled = true;
+  const status = $("#review-status").value;
+  const query = new URLSearchParams({limit: REVIEW_LIMIT, offset: reviewOffset});
+  if (status) query.set("status", status);
   try {
-    const { hits } = await api("/v1/search", {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(body)});
-    $("#s-results-card").style.display = "block";
-    $("#s-results").innerHTML = hits.length ? hits.map(h => `<div class="hit">
-      <span class="score">${h.score.toFixed(3)}</span>
-      <a href="${esc(h.url)}" target="_blank" rel="noopener">${esc(h.title)}</a>
-      <div class="meta">${esc(h.university)} · ${esc(h.country)} · deadline ${h.deadline || "—"}
-        · <a href="#" onclick="showDetail(${h.position_id});return false">detail</a></div>
-      <div class="detail" id="det-${h.position_id}" style="display:none"></div></div>`).join("")
-      : `<p class="muted">no hits</p>`;
-  } catch (e) { $("#s-msg").textContent = e.message; }
+    const page = await api("/v1/screening?" + query);
+    if (token !== reviewLoadToken) return;
+    reviewTotal = page.total;
+    const count = key => page.counts[key] || 0;
+    $("#review-tiles").innerHTML = [
+      ["eligible", "Eligible"], ["review", "Review"],
+      ["rejected", "Rejected"], ["quarantine", "Quarantine"], ["pending", "Pending"],
+    ].map(([value, label]) => `<button type="button" class="tile review-filter-tile${status === value ? " active" : ""}"
+      data-review-status="${value}" aria-pressed="${status === value}"
+      title="${status === value ? "Show all candidates" : `Filter by ${label}`}">
+      <div class="n">${count(value)}</div><div class="l">${label}</div></button>`).join("");
+    const start = page.total ? page.offset + 1 : 0;
+    const end = Math.min(page.offset + page.items.length, page.total);
+    $("#review-page").textContent = `${start}–${end} of ${page.total}`;
+    $("#btn-review-prev").disabled = reviewOffset === 0;
+    $("#btn-review-next").disabled = reviewOffset + REVIEW_LIMIT >= page.total;
+    $("#review-items").innerHTML = page.items.length ? page.items.map((item, index) => `<div class="hit numbered-hit">
+      <span class="hit-number">${page.offset + index + 1}.</span>
+      <div class="hit-content">
+        <div><span class="screen-badge ${esc(item.status)}">${esc(item.status)}</span>
+          ${item.manual ? `<span class="muted">manual</span>` : ""}
+          <a href="${esc(item.url)}" target="_blank" rel="noopener">${esc(item.title)}</a></div>
+        <div class="meta">${flag(item.country)} ${esc(item.country || "—")} · ${esc(item.university || "—")}
+          · type ${esc(item.position_type)} · reason ${esc(item.reason || "—")}
+          · source ${esc(item.source || "rules")} · route ${esc(item.review_state || "untriaged")}${item.decision ? ` · verdict ${esc(item.decision)}` : ""}${item.confidence != null ? ` · confidence ${Number(item.confidence).toFixed(2)}` : ""}</div>
+        ${item.evidence && item.evidence.length ? `<div class="meta">evidence: ${item.evidence.map(esc).join(" · ")}</div>` : ""}
+        <div class="meta"><a href="#" onclick="showReviewTrail(${item.id});return false">review trail</a></div>
+        <div class="detail" id="review-trail-${item.id}" style="display:none"></div>
+        <details><summary class="muted">existing description</summary>
+          <div class="screen-description">${esc(item.description || "No description was extracted.")}</div>
+        </details>
+        <div class="screen-actions">
+          <button class="act" onclick="setScreening(${item.id},'eligible')">Approve</button>
+          <button class="act ghost" onclick="setScreening(${item.id},'review')">Keep for review</button>
+          <button class="act ghost" onclick="setScreening(${item.id},'rejected')">Reject</button>
+        </div>
+      </div>
+    </div>`).join("") : `<p class="muted">No candidates with this status.</p>`;
+  } catch (e) {
+    if (token !== reviewLoadToken) return;
+    $("#review-msg").textContent = e.message;
+    $("#review-items").innerHTML = `<p class="err-msg">Could not load candidates. Use Refresh to retry.</p>`;
+  } finally {
+    if (token === reviewLoadToken) {
+      $("#review").setAttribute("aria-busy", "false");
+      $("#btn-review-refresh").disabled = false;
+    }
+  }
 }
-async function showDetail(id) {
-  const el = $("#det-" + id);
+
+async function setScreening(id, status) {
+  const note = prompt(`Optional note for ${status}:`, "");
+  if (note === null) return;
+  try {
+    await api(`/v1/positions/${id}/screening`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({status, reason: note || null}),
+    });
+    await loadReview(false);
+  } catch (e) {
+    $("#review-msg").textContent = e.message;
+  }
+}
+window.setScreening = setScreening;
+async function showReviewTrail(id) {
+  const el = $("#review-trail-" + id);
   if (el.style.display === "block") { el.style.display = "none"; return; }
   el.style.display = "block"; el.textContent = "loading…";
   try {
+    const rows = await api(`/v1/positions/${id}/review-attempts`);
+    el.textContent = rows.length ? rows.map(row =>
+      `${fmtDate(row.created_at)} · ${row.stage}/${row.version} · ${row.raw_decision} → ${row.accepted_status}` +
+      `${row.confidence == null ? "" : ` · confidence ${Number(row.confidence).toFixed(2)}`}` +
+      `${row.tool_attempts > 1 ? ` · ${row.tool_attempts} tool attempts` : ""}` +
+      `${row.reason ? `\n${row.reason}` : ""}` +
+      `${row.evidence.length ? `\nevidence: ${row.evidence.join(" · ")}` : ""}`
+    ).join("\n\n") : "No recorded attempts.";
+  } catch (e) { el.textContent = e.message; }
+}
+window.showReviewTrail = showReviewTrail;
+$("#review-tiles").onclick = event => {
+  const tile = event.target.closest("[data-review-status]");
+  if (!tile) return;
+  const select = $("#review-status");
+  select.value = select.value === tile.dataset.reviewStatus ? "" : tile.dataset.reviewStatus;
+  loadReview(true);
+};
+$("#review-status").onchange = () => loadReview(true);
+$("#btn-review-refresh").onclick = () => loadReview(false);
+$("#btn-review-prev").onclick = async () => {
+  reviewOffset = Math.max(0, reviewOffset - REVIEW_LIMIT);
+  await loadReview(false);
+  $("#review-items").scrollIntoView({block:"start"});
+};
+$("#btn-review-next").onclick = async () => {
+  if (reviewOffset + REVIEW_LIMIT < reviewTotal) reviewOffset += REVIEW_LIMIT;
+  await loadReview(false);
+  $("#review-items").scrollIntoView({block:"start"});
+};
+$("#btn-auto-review").onclick = async () => {
+  const limit = $("#review-auto-limit").value ? +$("#review-auto-limit").value : null;
+  $("#review-msg").textContent = "";
+  try {
+    const status = await api("/v1/pipeline/start", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body:JSON.stringify({
+        stages:["quality","review","evidence","review2","index"],
+        limits:{quality:null,review:limit,evidence:limit,review2:limit,index:limit},
+        max_pages:null,name:null
+      }),
+    });
+    renderStatus(status);
+    $("#review-msg").textContent = "review cascade and index sync started; progress is visible in Pipeline";
+  } catch (e) { $("#review-msg").textContent = e.message; }
+};
+
+// ---- search ----
+let searchFacets = null;
+const positionTypeLabel = value => value === "phd"
+  ? "PhD / doctoral / predoctoral position"
+  : (searchFacets && searchFacets.position_types[value]) || value;
+const opportunityKindLabel = value => ({
+  vacancy:"advertised opportunity",
+  programme:"programme intake",
+  spontaneous:"spontaneous application",
+  information:"information page",
+})[value] || "unclassified";
+let lastSearchBody = null;
+let lastSearchResult = null;
+const REPORTED_POSITIONS_KEY = "phdbot.reportedPositions.v1";
+let reportedPositions = (() => {
+  try {
+    const stored = JSON.parse(localStorage.getItem(REPORTED_POSITIONS_KEY) || "{}");
+    return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+  } catch { return {}; }
+})();
+const feedbackReasons = {
+  non_opportunity:"not an opportunity", closed:"closed / expired", duplicate:"duplicate",
+  wrong_type:"wrong position type", mismatched_details:"mismatched details",
+  broken_link:"broken link", other:"other",
+};
+const positionFeedback = id => reportedPositions[String(id)] || null;
+const reportedPosition = id => {
+  const feedback = positionFeedback(id);
+  return feedback?.reason === "confirmed_opportunity" ? null : feedback;
+};
+function persistReportedPositions() {
+  try { localStorage.setItem(REPORTED_POSITIONS_KEY, JSON.stringify(reportedPositions)); } catch {}
+}
+function verificationBadge(hit) {
+  const probable = hit.verification_status === "probable";
+  const confidence = hit.confidence == null ? "" : ` · confidence ${Number(hit.confidence).toFixed(2)}`;
+  const label = probable ? "Probable" : "Verified";
+  const title = probable
+    ? `Passed hard automatic exclusions but still awaits a final verified verdict${confidence}`
+    : `Verified by the screening pipeline${confidence}`;
+  return `<span class="verification-badge ${probable ? "probable" : "verified"}" title="${esc(title)}">${label}</span>`;
+}
+function uncertaintyBadges(hit) {
+  const score = Number(hit.uncertainty_percent || 0);
+  if (!score) return "";
+  const labels = {open_status:"Open status unverified", details:"Details incomplete", verification:"Verification evidence unavailable", source_family:"Similar URL routes were often reported as non-opportunities"};
+  const reasons = (hit.uncertainty_flags || []).map(flag => labels[flag] || flag);
+  const scoreBadge = `<span class="uncertainty-badge" title="Heuristic audit tier, not a statistical probability">Uncertainty ${score}%</span>`;
+  return scoreBadge + reasons.map(reason => `<span class="uncertainty-badge reason" title="This uncertainty is why the result remains probable">${esc(reason)}</span>`).join("");
+}
+function familySignalBadge(hit) {
+  if (!hit.source_family_signal) return "";
+  const positive = hit.source_family_signal === "supports_opportunity";
+  const label = positive ? "Opportunity route" : "Disputed route";
+  const title = `${hit.source_family_samples || 0} independent sibling labels support this URL-family signal. It is a routing prior, not evidence about this exact item.`;
+  return `<span class="verification-badge ${positive ? "probable" : "reported"}" title="${esc(title)}">${label}</span>`;
+}
+function pullProvenance(hit) {
+  const first = hit.first_seen_at || null;
+  const last = hit.last_seen_at || hit.scraped_at || null;
+  const title = `First pulled by PHDBOT: ${fmtDate(first)}; last confirmed on the source: ${fmtDate(last)}`;
+  return `<span title="${esc(title)}">PHDBOT first pulled ${dateOnly(first)} · last checked ${dateOnly(last)}</span>`;
+}
+const checkedValues = selector => [...document.querySelectorAll(selector + ":checked")].map(input => input.value);
+function multiSummary(summaryId, values, emptyLabel) {
+  $(summaryId).textContent = values.length ? (values.length <= 2 ? values.join(", ") : `${values.length} selected`) : emptyLabel;
+}
+const multiSelects = [...document.querySelectorAll("details.multi-select")];
+multiSelects.forEach(details => details.addEventListener("toggle", () => {
+  if (details.open) multiSelects.forEach(other => { if (other !== details) other.open = false; });
+}));
+document.addEventListener("click", event => {
+  if (!event.target.closest("details.multi-select")) multiSelects.forEach(details => { details.open = false; });
+});
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    const openSummary = document.querySelector("details.multi-select[open] > summary");
+    multiSelects.forEach(details => { details.open = false; });
+    openSummary?.focus();
+  }
+});
+function renderInstitutions() {
+  if (!searchFacets) return;
+  const countries = checkedValues(".s-country-option");
+  const previouslySelected = new Set(checkedValues(".s-univ-option"));
+  const institutions = searchFacets.institutions.filter(item => !countries.length || countries.includes(item.country));
+  $("#s-univ-menu").innerHTML = institutions.map(item => `<label><input class="s-univ-option" type="checkbox" value="${esc(item.name)}" ${previouslySelected.has(item.name) ? "checked" : ""}> ${flag(item.country)} ${esc(item.name)}</label>`).join("")
+    || `<span class="muted">No institutions for the selected countries</span>`;
+  document.querySelectorAll(".s-univ-option").forEach(input => input.onchange = () =>
+    multiSummary("#s-univ-summary", checkedValues(".s-univ-option"), "All institutions"));
+  multiSummary("#s-univ-summary", checkedValues(".s-univ-option"), "All institutions");
+}
+async function loadSearchFacets() {
+  if (searchFacets) return;
+  $("#search").setAttribute("aria-busy", "true");
+  $("#s-country-menu").innerHTML = loadingMarkup("Loading countries…");
+  $("#s-univ-menu").innerHTML = loadingMarkup("Loading institutions…");
+  $("#s-type-menu").innerHTML = loadingMarkup("Loading position types…");
+  try {
+    searchFacets = await api("/v1/search/facets");
+    $("#s-country-menu").innerHTML = searchFacets.countries.map(code =>
+      `<label><input class="s-country-option" type="checkbox" value="${esc(code)}"> ${flag(code)} ${esc(regionNames.of(code) || code)} (${esc(code)})</label>`).join("");
+    $("#s-type-menu").innerHTML = Object.keys(searchFacets.position_types).map(value =>
+      `<label><input class="s-type-option" type="checkbox" value="${esc(value)}"> ${esc(positionTypeLabel(value))}</label>`).join("");
+    document.querySelectorAll(".s-country-option").forEach(input => input.onchange = () => {
+      multiSummary("#s-country-summary", checkedValues(".s-country-option"), "All countries");
+      renderInstitutions();
+    });
+    document.querySelectorAll(".s-type-option").forEach(input => input.onchange = () =>
+      multiSummary("#s-type-summary", checkedValues(".s-type-option"), "All position types"));
+    renderInstitutions();
+  } catch (e) { $("#s-msg").textContent = e.message; }
+  finally { $("#search").setAttribute("aria-busy", "false"); }
+}
+$("#btn-search-reset").onclick = () => {
+  document.querySelectorAll(".s-country-option,.s-univ-option,.s-type-option").forEach(input => { input.checked = false; });
+  ["#s-deadline-from", "#s-deadline-to", "#s-posted-from", "#s-posted-to", "#s-comp-min", "#s-limit"]
+    .forEach(id => { $(id).value = ""; });
+  $("#s-max-uncertainty").value = "60";
+  $("#s-min-score").value = "0.50";
+  $("#s-sort").value = "relevance";
+  $("#s-order").value = "desc";
+  $("#s-mode").value = "include_probable";
+  $("#s-show-reported").checked = false;
+  multiSummary("#s-country-summary", [], "All countries");
+  multiSummary("#s-type-summary", [], "All position types");
+  renderInstitutions();
+  multiSelects.forEach(details => { details.open = false; });
+  $("#s-msg").textContent = "Filters reset; semantic query preserved.";
+};
+$("#btn-search").onclick = doSearch;
+$("#s-query").addEventListener("keydown", e => { if (e.key === "Enter") doSearch(); });
+let searchLoading = false;
+function setSearchLoading(active) {
+  searchLoading = active;
+  const button = $("#btn-search");
+  button.disabled = active;
+  button.classList.toggle("searching", active);
+  button.innerHTML = active ? `<span class="spinner" aria-hidden="true"></span> Searching…` : "Search";
+  $("#search").classList.toggle("search-loading", active);
+  $("#search").setAttribute("aria-busy", String(active));
+}
+function reportControls(hit) {
+  const feedback = positionFeedback(hit.position_id);
+  if (feedback?.reason === "confirmed_opportunity") {
+    return `<div class="screen-actions"><span class="verification-badge verified" title="Auditable operator feedback; this supports the route but does not by itself verify sibling items">Confirmed opportunity</span>
+      <button class="act ghost" onclick="undoPositionFeedback(${Number(hit.position_id)})">Undo confirmation</button></div>`;
+  }
+  if (feedback) {
+    const reason = feedbackReasons[feedback.reason] || feedback.reason || "reported";
+    return `<div class="screen-actions"><span class="verification-badge reported" title="Saved to the auditable feedback queue and hidden in this browser">Reported: ${esc(reason)}</span>
+      <button class="act ghost" onclick="undoPositionFeedback(${Number(hit.position_id)})">Undo report</button></div>`;
+  }
+  const options = Object.entries(feedbackReasons).map(([value, label]) => `<option value="${value}">${esc(label)}</option>`).join("");
+  return `<div class="screen-actions"><button class="act ghost" onclick="submitPositionFeedback(${Number(hit.position_id)},'confirmed_opportunity');return false" title="Confirm this exact item as a real opportunity; it will contribute cautiously to its URL-family audit">Confirm opportunity</button></div>
+    <details class="report-panel" id="report-${Number(hit.position_id)}"><summary>Report an issue</summary>
+    <div class="report-form"><select id="report-reason-${Number(hit.position_id)}" aria-label="Issue reason">${options}</select>
+      <input id="report-note-${Number(hit.position_id)}" maxlength="2000" placeholder="optional note" aria-label="Optional report note">
+      <button class="act ghost" onclick="submitPositionFeedback(${Number(hit.position_id)});return false">Submit report</button></div></details>`;
+}
+function renderSearchResult(result) {
+  lastSearchResult = result;
+  const {hits, total, institutions} = result;
+  $("#s-institutions-card").style.display = institutions.length ? "block" : "none";
+  $("#s-institutions").innerHTML = institutions.map((item, index) => `<div class="hit numbered-hit">
+    <span class="hit-number">${index + 1}.</span>
+    <div class="hit-content">
+      <div><span class="score">${item.score.toFixed(3)}</span>
+        <a href="${esc(item.url)}" target="_blank" rel="noopener">${esc(item.name)}</a></div>
+      <div class="meta">${item.kind === "research_group" ? "research group · " + esc(item.university) + " · " : item.kind === "institution" ? "institution · " : "university · "}${flag(item.country)} ${esc(item.country)}
+        · ${item.active_positions} positions in catalog
+        ${item.spontaneous_application_url ? ` · <a href="${esc(item.spontaneous_application_url)}" target="_blank" rel="noopener">spontaneous application ↗</a>` : ""}</div>
+    </div>
+  </div>`).join("");
+
+  const showReported = $("#s-show-reported").checked;
+  const hiddenCount = hits.filter(hit => reportedPosition(hit.position_id)).length;
+  const visibleHits = showReported ? hits : hits.filter(hit => !reportedPosition(hit.position_id));
+  $("#s-results-card").style.display = "block";
+  $("#s-results-card h2").textContent = `Results — ${visibleHits.length}${visibleHits.length !== total ? ` of ${total}` : ""}${!showReported && hiddenCount ? ` · ${hiddenCount} reported hidden` : ""}`;
+  $("#s-results").innerHTML = visibleHits.length ? visibleHits.map((h, i) => `<div class="hit numbered-hit search-result${resultViewClass(h.position_id)}" data-position-id="${h.position_id}">
+    <span class="hit-number">${i + 1}.</span>
+    <div class="hit-content">
+      <div><span class="score">${h.score.toFixed(3)}</span>
+        <div class="hit-title"><a href="${esc(h.url)}" target="_blank" rel="noopener" onclick="markResultViewed(${h.position_id},'source')">${esc(h.title)}</a>
+          ${verificationBadge(h)} ${uncertaintyBadges(h)} ${familySignalBadge(h)} <span class="view-marker">${resultViewBadge(h.position_id)}</span></div></div>
+      <div class="meta">${esc(h.university)} · ${flag(h.country)} ${esc(h.country || "—")}
+        · ${esc(positionTypeLabel(h.position_type))}
+        · ${esc(opportunityKindLabel(h.opportunity_kind))}
+        · duration ${esc(h.duration || "—")} · compensation ${esc(compensation(h))}
+        · published ${dateOnly(h.published_at)} · ${pullProvenance(h)} · deadline ${dateOnly(h.deadline)}
+        · <a href="#" id="det-link-${h.position_id}" onclick="showDetail(${h.position_id});return false">show details</a></div>
+      <div class="detail" id="det-${h.position_id}" style="display:none"></div>
+      ${reportControls(h)}
+    </div>
+  </div>`).join("")
+    : `<p class="muted">${hiddenCount && !showReported ? "Every returned item has been reported and is hidden in this browser. Enable ‘show reported items’ to inspect or undo them." : "No active positions exceed the relevance threshold. Related institutions may still appear above; lower the threshold only if you want a broader search."}</p>`;
+}
+async function submitPositionFeedback(id, forcedReason = null) {
+  const reason = forcedReason || $("#report-reason-" + id).value;
+  const noteInput = $("#report-note-" + id);
+  const note = noteInput ? noteInput.value.trim() || null : null;
+  try {
+    const feedback = await api(`/v1/positions/${id}/feedback`, {
+      method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({reason, note}),
+    });
+    reportedPositions[String(id)] = {feedbackId:feedback.id, reason:feedback.reason, at:feedback.created_at};
+    persistReportedPositions();
+    if (lastSearchResult) renderSearchResult(lastSearchResult);
+    $("#s-msg").innerHTML = reason === "confirmed_opportunity"
+      ? `Confirmation saved as auditable operator feedback. <button class="act ghost" onclick="undoPositionFeedback(${Number(id)})">Undo</button>`
+      : `Report saved and item hidden in this browser. <button class="act ghost" onclick="undoPositionFeedback(${Number(id)})">Undo</button>`;
+  } catch (e) { $("#s-msg").textContent = e.message; }
+}
+async function undoPositionFeedback(id) {
+  const feedback = positionFeedback(id);
+  if (!feedback) return;
+  try {
+    if (feedback.feedbackId) await api(`/v1/positions/${id}/feedback/${feedback.feedbackId}/retract`, {method:"POST"});
+    delete reportedPositions[String(id)];
+    persistReportedPositions();
+    if (lastSearchResult) renderSearchResult(lastSearchResult);
+    $("#s-msg").textContent = "Report retracted; the item is visible again.";
+  } catch (e) { $("#s-msg").textContent = e.message; }
+}
+window.submitPositionFeedback = submitPositionFeedback;
+window.undoPositionFeedback = undoPositionFeedback;
+$("#s-show-reported").onchange = () => { if (lastSearchResult) renderSearchResult(lastSearchResult); };
+async function doSearch() {
+  $("#s-msg").textContent = "";
+  if (searchLoading) return;
+  const q = $("#s-query").value.trim();
+  if (!q) { $("#s-msg").textContent = "Enter a semantic query first."; $("#s-query").focus(); return; }
+  const body = {
+    query: q,
+    mode: $("#s-mode").value,
+    max_uncertainty: $("#s-max-uncertainty").value ? +$("#s-max-uncertainty").value : null,
+    countries: checkedValues(".s-country-option"),
+    universities: checkedValues(".s-univ-option"),
+    position_types: checkedValues(".s-type-option"),
+    deadline_after: $("#s-deadline-from").value || null,
+    deadline_before: $("#s-deadline-to").value || null,
+    posted_after: $("#s-posted-from").value || null,
+    posted_before: $("#s-posted-to").value || null,
+    compensation_min: $("#s-comp-min").value ? +$("#s-comp-min").value : null,
+    min_score: +$("#s-min-score").value,
+    sort_by: $("#s-sort").value,
+    sort_order: $("#s-order").value,
+    limit: $("#s-limit").value ? +$("#s-limit").value : null,
+  };
+  setSearchLoading(true);
+  $("#s-msg").innerHTML = `<span class="loading-indicator"><span class="spinner" aria-hidden="true"></span>Searching indexed opportunities…</span>`;
+  try {
+    const result = await api("/v1/search", {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(body)});
+    $("#s-msg").textContent = "";
+    lastSearchBody = body;
+    $("#btn-export").disabled = false;
+    $("#btn-macro-save").disabled = false;
+    renderSearchResult(result);
+  } catch (e) { $("#s-msg").textContent = e.message; }
+  finally { setSearchLoading(false); }
+}
+$("#btn-export").onclick = async () => {
+  if (!lastSearchBody) return;
+  $("#s-msg").textContent = "generating export…";
+  try {
+    const response = await fetch("/v1/exports", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body:JSON.stringify({search:lastSearchBody, format:$("#s-export-format").value}),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || `${response.status} ${response.statusText}`);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("content-disposition") || "";
+    const filename = /filename="([^"]+)"/.exec(disposition)?.[1] || `phdbot-results.${$("#s-export-format").value}`;
+    const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = filename; link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    $("#s-msg").textContent = `exported ${filename}`;
+  } catch (e) { $("#s-msg").textContent = e.message; }
+};
+async function showDetail(id) {
+  const el = $("#det-" + id);
+  const link = $("#det-link-" + id);
+  if (el.style.display === "block") { el.style.display = "none"; if (link) link.textContent = "show details"; return; }
+  if (link) link.textContent = "hide details";
+  el.style.display = "block"; el.textContent = "loading…";
+  try {
     const { found, position: p } = await api("/v1/positions/" + id);
-    el.textContent = found ? `${p.title}\n\ndeadline: ${p.deadline || "—"} (raw: ${p.deadline_raw || "—"})\n\n${p.description}` : "not found";
+    if (found) markResultViewed(id, "details");
+    el.textContent = found
+      ? `${p.title}\n\nType: ${positionTypeLabel(p.position_type)}\nOpportunity: ${opportunityKindLabel(p.opportunity_kind)}\nUniversity: ${p.university || "—"}\nCountry: ${flag(p.country)} ${p.country || "—"}\nPublished: ${p.published_at || "—"} (raw: ${p.published_raw || "—"})\nFirst pulled by PHDBOT: ${fmtDate(p.first_seen_at)}\nLast checked by PHDBOT: ${fmtDate(p.last_seen_at || p.scraped_at)}\nDeadline: ${p.deadline || "—"} (raw: ${p.deadline_raw || "—"})\nDuration: ${p.duration || "—"}\nCompensation: ${p.compensation || "—"}\n\n${p.description || "No additional description was extracted."}`
+      : "not found";
   } catch (e) { el.textContent = e.message; }
 }
 window.showDetail = showDetail;
 
+// ---- macros ----
+let macrosLoadToken = 0;
+async function loadMacros() {
+  const token = ++macrosLoadToken;
+  $("#macro-msg").textContent = "";
+  $("#macros").setAttribute("aria-busy", "true");
+  $("#macro-list").innerHTML = loadingMarkup("Loading saved workflows…");
+  try {
+    await loadSchedules();
+    const macros = await api("/v1/macros");
+    if (token !== macrosLoadToken) return;
+    $("#macro-list").innerHTML = macros.length ? macros.map(m => `<div class="hit">
+      <b>${esc(m.name)}</b> <span class="muted">${m.refresh ? "refresh → " : ""}search → ${m.export_formats.map(esc).join("+")}</span>
+      <div class="meta">query ${esc(m.search.query)} · destination exports/${esc(m.destination || "")}</div>
+      ${m.description ? `<div>${esc(m.description)}</div>` : ""}
+      <div class="screen-actions">
+        <button class="act" id="macro-btn-${m.id}" onclick="runMacro(${m.id})">Run now</button>
+        <input id="macro-time-${m.id}" class="macro-time" type="datetime-local" step="60" title="Europe/Rome start time">
+        <button class="act ghost" onclick="scheduleMacro(${m.id})">Schedule</button>
+        <span id="macro-run-${m.id}" class="muted" role="status" aria-live="polite"></span>
+      </div>
+      <div class="schedule-list" data-macro-schedules="${m.id}"></div>
+    </div>`).join("") : `<p class="muted">No saved macros.</p>`;
+    document.querySelectorAll(".macro-time").forEach(input => { input.value = nextRomeEvening(); });
+    renderMacroScheduleStates();
+  } catch (e) {
+    if (token === macrosLoadToken) {
+      $("#macro-msg").textContent = e.message;
+      $("#macro-list").innerHTML = `<p class="err-msg">Could not load saved workflows. Use Refresh list to retry.</p>`;
+    }
+  } finally {
+    if (token === macrosLoadToken) $("#macros").setAttribute("aria-busy", "false");
+  }
+}
+$("#btn-macro-refresh").onclick = loadMacros;
+$("#btn-macro-save").onclick = async () => {
+  if (!lastSearchBody) return;
+  const name = $("#m-name").value.trim();
+  const formats = checkedValues(".m-format");
+  if (!name || !formats.length) { $("#macro-msg").textContent = "name and at least one format are required"; return; }
+  try {
+    await api("/v1/macros", {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({
+      name, description:$("#m-description").value.trim() || null, refresh:$("#m-refresh").checked,
+      pipeline:{stages:PUBLISH_STAGES, limits:{}, max_pages:null, name:null}, search:lastSearchBody,
+      export_formats:formats, destination:$("#m-destination").value.trim(),
+    })});
+    $("#macro-msg").textContent = `saved ${name}`;
+    await loadMacros();
+  } catch (e) { $("#macro-msg").textContent = e.message; }
+};
+async function runMacro(id) {
+  const label = $("#macro-run-" + id);
+  const button = $("#macro-btn-" + id);
+  if (button) button.disabled = true;
+  try {
+    const run = await api(`/v1/macros/${id}/run`, {method:"POST"});
+    label.textContent = `run #${run.id}: queued`;
+    while (true) {
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      const current = await api(`/v1/macro-runs/${run.id}`);
+      label.textContent = `run #${run.id}: ${current.state}${current.current_step ? " · " + current.current_step : ""}${current.outputs.length ? " · " + current.outputs.join(", ") : ""}`;
+      if (current.state === "done" || current.state === "failed") {
+        if (current.error) $("#macro-msg").textContent = current.error;
+        break;
+      }
+    }
+  } catch (e) { $("#macro-msg").textContent = e.message; }
+  finally { if (button) button.disabled = false; }
+}
+window.runMacro = runMacro;
+async function scheduleMacro(id) {
+  const runAt = $("#macro-time-" + id).value;
+  if (!runAt) { $("#macro-msg").textContent = "choose a Europe/Rome start time"; return; }
+  try {
+    const job = await api("/v1/schedules", {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({
+      target:"macro", run_at:runAt, timezone:"Europe/Rome", macro_id:id,
+    })});
+    $("#macro-msg").textContent = `scheduled job #${job.id} for ${fmtRomeDate(job.run_at)}`;
+    await loadSchedules();
+  } catch (e) { $("#macro-msg").textContent = e.message; }
+}
+window.scheduleMacro = scheduleMacro;
+
 // boot
+let rememberedTab = "";
+try { rememberedTab = localStorage.getItem(TAB_KEY) || ""; } catch {}
+const requestedTab = location.hash.slice(1);
+const initialTab = tabButtons.some(button => button.dataset.tab === requestedTab)
+  ? requestedTab
+  : tabButtons.some(button => button.dataset.tab === rememberedTab) ? rememberedTab : "pipeline";
+activateTab(initialTab);
+window.addEventListener("hashchange", () => {
+  const name = location.hash.slice(1);
+  if (tabButtons.some(button => button.dataset.tab === name)) activateTab(name, {remember: false});
+});
 poll();
 setInterval(poll, 3000);
 </script>
