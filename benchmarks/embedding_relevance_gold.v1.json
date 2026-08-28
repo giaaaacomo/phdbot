@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "description": "Manually inspected PHDBOT retrieval judgments. Grade 2 is directly relevant; grade 1 is partially relevant.",
+  "judgments": {
+    "biodesign": {"2": [1210], "1": []},
+    "xr": {"2": [148, 4998, 6591, 56791], "1": [24842]},
+    "extended reality": {"2": [148, 4998, 6591], "1": [24842]},
+    "vr": {"2": [148, 4998], "1": [6591, 24842]},
+    "virtual reality": {"2": [148, 4998], "1": [6591, 24842]},
+    "spatial computing": {"2": [10836], "1": [10835, 148, 4998, 6591, 24842]},
+    "interaction design": {"2": [1210, 25510, 55215], "1": [148, 4998, 6591, 24842]},
+    "progettazione dell'interazione": {"2": [1210, 25510, 55215], "1": [148, 4998, 6591, 24842]},
+    "realtà estesa": {"2": [148, 4998, 6591], "1": [24842]},
+    "ingegneria navale": {"2": [32045, 33928, 53963, 55985, 89659], "1": []}
+  }
+}

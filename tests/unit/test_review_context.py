@@ -8,6 +8,7 @@ from phd_searcher.pipeline.review_context import (
     classify_opportunity_kind_evidence,
     evidence_quote_present,
     explicit_negative_evidence_supports,
+    has_future_deadline_status_conflict,
     negative_evidence_supports,
     opportunity_kind_evidence_supports,
     select_evidence_document,
@@ -21,6 +22,87 @@ def test_evidence_document_falls_back_only_for_known_fetch_errors():
     assert select_evidence_document(inline, '``` {"error_type": "LanguageFolder"} ```') == inline
     assert select_evidence_document(inline, "A short but valid fetched page") == "A short but valid fetched page"
     assert select_evidence_document(inline, None) == inline
+
+
+def test_euraxess_job_scope_removes_site_footer_but_preserves_attributable_status():
+    title = "PhD Position eXtended Reality for Inclusive Automated Vehicle Interaction"
+    fetched = (
+        f"site navigation {title} 18 Jul 2026 "
+        "## Job Information Organisation Delft University of Technology "
+        "Application Deadline 30 Aug 2026 - 21:59 (UTC) Country Netherlands "
+        "## Offer Description Applications are invited for this PhD position in "
+        "Virtual Reality and eXtended Reality. "
+        "## Work Location(s) Delft ## Contact City Delft "
+        "STATUS: EXPIRED [Apply now](https://academictransfer.example/apply/) "
+        "##### Share this page unrelated navigation STATUS: OPEN"
+    )
+
+    selected = select_evidence_document(
+        "Virtual Reality research position.",
+        fetched,
+        title=title,
+        url="https://euraxess.ec.europa.eu/jobs/453992",
+        deadline=date(2026, 8, 30),
+        today=date(2026, 8, 26),
+    )
+
+    assert selected.startswith(title)
+    assert "Application Deadline 30 Aug 2026" in selected
+    assert "Virtual Reality and eXtended Reality" in selected
+    assert "STATUS: EXPIRED" in selected
+    assert "unrelated navigation" not in selected
+    assert has_future_deadline_status_conflict(
+        "Virtual Reality research position.",
+        fetched,
+        title=title,
+        url="https://euraxess.ec.europa.eu/jobs/453992",
+        deadline=date(2026, 8, 30),
+        today=date(2026, 8, 26),
+    )
+
+
+def test_euraxess_candidate_scope_never_hides_attributable_or_elapsed_closure():
+    title = "PhD position in interaction design"
+    body_closed = (
+        f"navigation {title} ## Job Information "
+        "Application Deadline 30 Aug 2026 - 21:59 (UTC) "
+        "## Offer Description Application status: CLOSED. "
+        "## Work Location Delft ## Contact Example"
+    )
+    elapsed_footer_closed = (
+        f"navigation {title} ## Job Information "
+        "Application Deadline 20 Aug 2026 - 21:59 (UTC) "
+        "## Offer Description A funded doctoral position. "
+        "## Work Location Delft ## Contact Example STATUS: EXPIRED"
+    )
+
+    selected_body = select_evidence_document(
+        "Interaction design research.",
+        body_closed,
+        title=title,
+        url="https://euraxess.ec.europa.eu/jobs/1",
+        deadline=date(2026, 8, 30),
+        today=date(2026, 8, 26),
+    )
+    selected_elapsed = select_evidence_document(
+        "Interaction design research.",
+        elapsed_footer_closed,
+        title=title,
+        url="https://euraxess.ec.europa.eu/jobs/2",
+        deadline=date(2026, 8, 20),
+        today=date(2026, 8, 26),
+    )
+
+    assert "Application status: CLOSED" in selected_body
+    assert "STATUS: EXPIRED" in selected_elapsed
+    assert not has_future_deadline_status_conflict(
+        "Interaction design research.",
+        body_closed,
+        title=title,
+        url="https://euraxess.ec.europa.eu/jobs/1",
+        deadline=date(2026, 8, 30),
+        today=date(2026, 8, 26),
+    )
 
 
 def test_evidence_context_keeps_head_deadline_window_and_tail():

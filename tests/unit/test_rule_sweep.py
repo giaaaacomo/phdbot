@@ -27,7 +27,7 @@ def _position(**overrides):
 
 
 def test_rule_sweep_is_versioned_and_rejects_only_high_precision_pages():
-    assert RULE_SWEEP_VERSION == "rules-v12"
+    assert RULE_SWEEP_VERSION == "rules-v13"
     assert sweep_decision(_position()).status == "rejected"
     assert sweep_decision(
         _position(

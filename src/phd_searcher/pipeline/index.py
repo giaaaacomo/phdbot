@@ -27,6 +27,11 @@ from phd_searcher.database.models.position import Position
 from phd_searcher.database.models.position_feedback import PositionFeedback
 from phd_searcher.database.models.university import University
 from phd_searcher.engine.model_helper import ModelHelper
+from phd_searcher.engine.search_contract import validate_search_index_contract
+from phd_searcher.engine.search_documents import (
+    SEARCH_INDEX_CONTRACT_PAYLOAD,
+    build_candidate_search_document,
+)
 from phd_searcher.opportunity_kinds import PROGRAMME, UNKNOWN, VACANCY
 from phd_searcher.pipeline.family_feedback import (
     FamilyFeedbackProfiles,
@@ -42,6 +47,7 @@ from phd_searcher.pipeline.review_context import (
     build_evidence_context,
     classify_opportunity_kind_evidence,
     evidence_quote_present,
+    has_future_deadline_status_conflict,
     opportunity_kind_evidence_supports,
     select_evidence_document,
     triage_evidence_supports,
@@ -118,6 +124,9 @@ _TITLE_ONLY_CANDIDATE_TYPES = frozenset(
         "faculty",
     }
 )
+_STATUS_CONFLICT_CANDIDATE_TYPES = _TITLE_ONLY_CANDIDATE_TYPES | {
+    "research_fellowship"
+}
 _EURAXESS_HOST = "euraxess.ec.europa.eu"
 
 
@@ -178,6 +187,11 @@ def _has_authoritative_verified_status(position: Position, *, today: date) -> bo
     document = select_evidence_document(
         description,
         full_description if isinstance(full_description, str) else None,
+        title=str(getattr(position, "title", "") or ""),
+        url=str(getattr(position, "url", "") or ""),
+        deadline=getattr(position, "deadline", None),
+        deadline_raw=str(getattr(position, "deadline_raw", "") or ""),
+        today=today,
     )
     context = build_evidence_context(
         f"{getattr(position, 'title', '') or ''}\n{document}"
@@ -242,7 +256,11 @@ def _is_euraxess_source(
     return False
 
 
-def _position_evidence(position: Position) -> tuple[str, str, list[str]]:
+def _position_evidence(
+    position: Position,
+    *,
+    today: date | None = None,
+) -> tuple[str, str, list[str]]:
     """Return the exact grounded text used by the provisional gate."""
     title = str(getattr(position, "title", "") or "")
     description = str(getattr(position, "description", "") or "")
@@ -250,6 +268,11 @@ def _position_evidence(position: Position) -> tuple[str, str, list[str]]:
     evidence = select_evidence_document(
         description,
         full_description if isinstance(full_description, str) else None,
+        title=title,
+        url=str(getattr(position, "url", "") or ""),
+        deadline=getattr(position, "deadline", None),
+        deadline_raw=str(getattr(position, "deadline_raw", "") or ""),
+        today=today,
     )
     deadline_raw = str(getattr(position, "deadline_raw", "") or "")
     quotes = [quote for quote in (title, evidence, deadline_raw) if quote]
@@ -278,7 +301,7 @@ def _provisional_search_metadata(
     today: date,
 ) -> tuple[str, str]:
     """Derive reversible search labels from the evidence that passed the gate."""
-    title, evidence, evidence_quotes = _position_evidence(position)
+    title, evidence, evidence_quotes = _position_evidence(position, today=today)
     position_type = classify_position(title, evidence)
     stored_type = str(getattr(position, "position_type", "other") or "other")
     if (
@@ -369,9 +392,21 @@ def _provisional_assessment(
         return None
     if not _has_acceptable_provisional_source(position, listing_page):
         return None
-    title, evidence, evidence_quotes = _position_evidence(position)
+    title, evidence, evidence_quotes = _position_evidence(
+        position,
+        today=current_day,
+    )
     url = str(getattr(position, "url", "") or "")
-    if detail_rejection_evidence(evidence) is not None:
+    status_conflict = has_future_deadline_status_conflict(
+        str(getattr(position, "description", "") or ""),
+        getattr(position, "full_description", None),
+        title=title,
+        url=url,
+        deadline=getattr(position, "deadline", None),
+        deadline_raw=getattr(position, "deadline_raw", None),
+        today=current_day,
+    )
+    if detail_rejection_evidence(evidence) is not None and not status_conflict:
         return None
     rule_decision = screen_position(
         title,
@@ -379,7 +414,7 @@ def _provisional_assessment(
         evidence,
         str(getattr(position, "position_type", "other") or "other"),
     )
-    if rule_decision.status == "rejected":
+    if rule_decision.status == "rejected" and not status_conflict:
         return None
 
     # A `/jobs/` URL is useful for routing, but it cannot turn every link on a
@@ -408,6 +443,20 @@ def _provisional_assessment(
         evidence_quotes,
         today=current_day,
     )
+
+    # A future deadline plus a rendered Apply link cannot override an explicit
+    # CLOSED/EXPIRED status.  Keep the role searchable only as a clearly
+    # labelled lead; deeper evidence or the user decides which signal is stale.
+    if status_conflict:
+        if (
+            classify_position(title, "", explicit=position_type)
+            in _STATUS_CONFLICT_CANDIDATE_TYPES
+        ):
+            return _TITLE_ONLY_CANDIDATE_UNCERTAINTY, (
+                "open_status",
+                "details",
+            )
+        return None
 
     if content_decision.status == "eligible" and supported_kind in _POSITION_INDEX_KINDS:
         if application_evidence_supports(
@@ -827,19 +876,17 @@ async def _embed_and_upsert(
     family_profiles: FamilyFeedbackProfiles,
     today: date,
 ) -> list[PointStruct]:
-    vectors = await model.embed(
-        [
-            f"{position.title}\n{position.full_description or position.description}"
-            for position, _, _ in batch
+    prepared: list[
+        tuple[
+            Position,
+            University | None,
+            VerificationMetadata,
+            FamilySignalPayload,
+            str,
+            str,
         ]
-    )
-    await _ensure_collection(qdrant, collection, dim=len(vectors[0]))
-    points: list[PointStruct] = []
-    for (position, university, listing_page), vector in zip(
-        batch,
-        vectors,
-        strict=True,
-    ):
+    ] = []
+    for position, university, listing_page in batch:
         verification = _verification_metadata(
             position,
             today,
@@ -853,13 +900,56 @@ async def _embed_and_upsert(
             verification,
             _family_signal_for_position(position, listing_page, family_profiles),
         )
-        verification_status, confidence, uncertainty_percent, uncertainty_flags = verification
-        family_signal, family_samples = family_payload
         position_type, opportunity_kind = _search_payload_metadata(
             position,
-            verification_status,
+            verification[0],
             today=today,
         )
+        prepared.append(
+            (
+                position,
+                university,
+                verification,
+                family_payload,
+                position_type,
+                opportunity_kind,
+            )
+        )
+
+    vectors = await model.embed_documents(
+        [
+            build_candidate_search_document(
+                title=position.title,
+                position_type=position_type,
+                institution=(
+                    university.name
+                    if university is not None
+                    else (position.institution_name or "")
+                ),
+                description=position.description,
+            )
+            for position, university, _, _, position_type, _ in prepared
+        ]
+    )
+    await _ensure_collection(qdrant, collection, dim=len(vectors[0]))
+    points: list[PointStruct] = []
+    for (
+        (
+            position,
+            university,
+            verification,
+            family_payload,
+            position_type,
+            opportunity_kind,
+        ),
+        vector,
+    ) in zip(
+        prepared,
+        vectors,
+        strict=True,
+    ):
+        verification_status, confidence, uncertainty_percent, uncertainty_flags = verification
+        family_signal, family_samples = family_payload
         points.append(
             PointStruct(
                 id=position.id,
@@ -895,6 +985,7 @@ async def _embed_and_upsert(
                     "source_family_signal": family_signal,
                     "source_family_samples": family_samples,
                     "source_family_version": SOURCE_FAMILY_VERSION,
+                    SEARCH_INDEX_CONTRACT_PAYLOAD: model.search_index_contract(),
                     "published": position.published_at.isoformat() if position.published_at else None,
                     "published_ts": (
                         datetime.combine(position.published_at, time.min, tzinfo=UTC).isoformat()
@@ -928,6 +1019,11 @@ async def run(
     full_refresh = limit is None and name_like is None
 
     async with session_maker() as session:
+        await validate_search_index_contract(
+            qdrant,
+            config.collection,
+            model.search_index_contract(),
+        )
         family_profiles = await _load_family_feedback_profiles(session)
         invalidated = await _invalidate_missing_collection(
             qdrant,

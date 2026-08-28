@@ -176,7 +176,7 @@ def test_manual_and_llm_screening_survive_enrich_rules():
     assert _has_authoritative_screening(manual=False, source="cache", status="eligible")
     assert not _has_authoritative_screening(manual=False, source="rules", status="eligible")
     assert not _has_authoritative_screening(manual=False, source="llm", status="pending")
-    assert RULE_SWEEP_VERSION == "rules-v12"
+    assert RULE_SWEEP_VERSION == "rules-v13"
 
 
 def test_evidence_collection_never_rewrites_the_public_screening_verdict():

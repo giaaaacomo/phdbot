@@ -27,6 +27,7 @@ from phd_searcher.pipeline.deep_review import (
     _document_can_resolve,
     _elapsed_deadline_rule_result,
     _EvidenceGroundingError,
+    _future_deadline_status_conflict_result,
     _IncompleteDeepReviewError,
     _preflight_abstention,
     _prompt,
@@ -876,7 +877,7 @@ async def test_final_grounding_failure_becomes_auditable_abstention(monkeypatch)
         confidence=0,
     )
     assert _review_state(result, "review") == "grounding_failure"
-    assert _result_version(result, "hybrid-v3") == REVIEW_VERSION == "evidence-v23"
+    assert _result_version(result, "hybrid-v3") == REVIEW_VERSION == "evidence-v24"
     assert _audit_details(result) == {
         "actual_vacancy": "unknown",
         "open_status": "unknown",
@@ -942,6 +943,39 @@ def test_review2_rule_router_rejects_admin_pages_without_calling_a_model():
     assert result.rule_reason == "administrative_non_vacancy_page"
     assert _accepted_status(result.decision) == "rejected"
     assert _deterministic_rule_result(vacancy) is None
+
+
+def test_review2_abstains_before_closed_rule_on_euraxess_status_conflict():
+    position = _position(
+        148,
+        "Applications are invited for this funded doctoral position.",
+    )
+    position.title = "PhD Position eXtended Reality for Inclusive Vehicle Interaction"
+    position.url = "https://euraxess.ec.europa.eu/jobs/453993"
+    position.position_type = "phd"
+    position.deadline = date(2026, 8, 30)
+    position.deadline_raw = "30 Aug 2026 - 21:59 (UTC)"
+    position.full_description = (
+        f"{position.title} ## Job Information "
+        f"Application Deadline {position.deadline_raw} "
+        "## Offer Description Applications are invited for this funded doctoral position. "
+        "## Work Locations Delft ## Contact Example University "
+        "STATUS: EXPIRED [Apply now](https://external.example/apply/) "
+        "##### Share this page"
+    )
+    position.description = "Applications are invited for this funded doctoral position."
+
+    # The conflict guard runs before deterministic rules, caches and the model
+    # in the canonical router, preserving the contradictory source evidence.
+    conflict = _future_deadline_status_conflict_result(
+        position,
+        today=date(2026, 8, 26),
+    )
+
+    assert conflict is not None
+    assert conflict.attempts == 0
+    assert conflict.preflight_reason == "future_deadline_status_conflict"
+    assert _accepted_status(conflict.decision) == "review"
 
 
 @pytest.mark.asyncio
@@ -1032,7 +1066,7 @@ def test_review2_tool_failure_does_not_stamp_the_final_version():
 
     assert _result_version(failure, "hybrid-v3") == "hybrid-v3"
     assert _result_version(failure, None) is None
-    assert _result_version(success, "hybrid-v3") == REVIEW_VERSION == "evidence-v23"
+    assert _result_version(success, "hybrid-v3") == REVIEW_VERSION == "evidence-v24"
     assert _review_state(failure, "review") == "tool_error"
     assert _review_state(success, "eligible") == "resolved"
 

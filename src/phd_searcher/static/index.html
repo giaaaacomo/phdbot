@@ -135,12 +135,13 @@
   .uncertainty-badge { display: inline-block; padding: 1px 7px; border: 1px solid currentColor;
     border-radius: 12px; color: var(--warn); font-size: 11px; font-weight: 700; white-space: nowrap; }
   .uncertainty-badge.reason { color: var(--muted); }
+  .feedback-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: auto; padding-top: 9px; }
   .report-panel { margin-top: 8px; width: min(100%, 620px); }
-  .report-panel > summary { width: max-content; cursor: pointer; color: var(--muted); font-size: 12px; }
   .report-form { display: grid; grid-template-columns: minmax(150px, .7fr) minmax(220px, 1.5fr) auto;
     align-items: center; gap: 8px; margin-top: 7px; }
   .view-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: -5px 0 8px; }
-  .hit-title { display: flex; gap: 8px; align-items: baseline; padding-right: 64px; }
+  .hit-title { padding-right: 64px; }
+  .hit-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 7px; margin-top: 5px; }
   .hit-number, .row-number { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .hit .meta { color: var(--muted); font-size: 12px; }
   .score { float: right; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -401,7 +402,7 @@
         <div class="filter-section">
           <h3>Relevance and result order</h3>
           <div class="filter-grid">
-            <label title="Exclude results below this semantic similarity threshold">Minimum relevance <input id="s-min-score" type="number" min="-1" max="1" step="0.05" value="0.50"></label>
+            <label title="Exclude results below this semantic similarity threshold">Minimum relevance <input id="s-min-score" type="number" min="-1" max="1" step="0.05" value="0.60"></label>
             <label title="Choose the field used to order the filtered matches">Order by <select id="s-sort"><option value="relevance">relevance</option><option value="uncertainty">uncertainty</option><option value="compensation">compensation</option><option value="posted">publication date</option><option value="deadline">deadline</option><option value="country">country</option></select></label>
             <label title="Choose ascending or descending result order">Direction <select id="s-order"><option value="desc">descending</option><option value="asc">ascending</option></select></label>
             <label title="Optional display cap; empty returns every match above the relevance threshold">Maximum results <input id="s-limit" type="number" min="1" placeholder="all"></label>
@@ -1122,7 +1123,7 @@ $("#btn-search-reset").onclick = () => {
   ["#s-deadline-from", "#s-deadline-to", "#s-posted-from", "#s-posted-to", "#s-comp-min", "#s-limit"]
     .forEach(id => { $(id).value = ""; });
   $("#s-max-uncertainty").value = "60";
-  $("#s-min-score").value = "0.50";
+  $("#s-min-score").value = "0.60";
   $("#s-sort").value = "relevance";
   $("#s-order").value = "desc";
   $("#s-mode").value = "include_probable";
@@ -1148,20 +1149,28 @@ function setSearchLoading(active) {
 function reportControls(hit) {
   const feedback = positionFeedback(hit.position_id);
   if (feedback?.reason === "confirmed_opportunity") {
-    return `<div class="screen-actions"><span class="verification-badge verified" title="Auditable operator feedback; this supports the route but does not by itself verify sibling items">Confirmed opportunity</span>
+    return `<div class="feedback-actions"><span class="verification-badge verified" title="Auditable operator feedback; this supports the route but does not by itself verify sibling items">Confirmed opportunity</span>
       <button class="act ghost" onclick="undoPositionFeedback(${Number(hit.position_id)})">Undo confirmation</button></div>`;
   }
   if (feedback) {
     const reason = feedbackReasons[feedback.reason] || feedback.reason || "reported";
-    return `<div class="screen-actions"><span class="verification-badge reported" title="Saved to the auditable feedback queue and hidden in this browser">Reported: ${esc(reason)}</span>
+    return `<div class="feedback-actions"><span class="verification-badge reported" title="Saved to the auditable feedback queue and hidden in this browser">Reported: ${esc(reason)}</span>
       <button class="act ghost" onclick="undoPositionFeedback(${Number(hit.position_id)})">Undo report</button></div>`;
   }
   const options = Object.entries(feedbackReasons).map(([value, label]) => `<option value="${value}">${esc(label)}</option>`).join("");
-  return `<div class="screen-actions"><button class="act ghost" onclick="submitPositionFeedback(${Number(hit.position_id)},'confirmed_opportunity');return false" title="Confirm this exact item as a real opportunity; it will contribute cautiously to its URL-family audit">Confirm opportunity</button></div>
-    <details class="report-panel" id="report-${Number(hit.position_id)}"><summary>Report an issue</summary>
-    <div class="report-form"><select id="report-reason-${Number(hit.position_id)}" aria-label="Issue reason">${options}</select>
+  return `<div class="feedback-actions"><button class="act ghost" onclick="submitPositionFeedback(${Number(hit.position_id)},'confirmed_opportunity');return false" title="Confirm this exact item as a real opportunity; it will contribute cautiously to its URL-family audit">Confirm opportunity</button>
+    <button class="act ghost" id="report-toggle-${Number(hit.position_id)}" aria-controls="report-${Number(hit.position_id)}" aria-expanded="false" onclick="toggleReportPanel(${Number(hit.position_id)});return false">Report an issue</button></div>
+    <div class="report-panel" id="report-${Number(hit.position_id)}" hidden><div class="report-form"><select id="report-reason-${Number(hit.position_id)}" aria-label="Issue reason">${options}</select>
       <input id="report-note-${Number(hit.position_id)}" maxlength="2000" placeholder="optional note" aria-label="Optional report note">
-      <button class="act ghost" onclick="submitPositionFeedback(${Number(hit.position_id)});return false">Submit report</button></div></details>`;
+      <button class="act ghost" onclick="submitPositionFeedback(${Number(hit.position_id)});return false">Submit report</button></div></div>`;
+}
+function toggleReportPanel(id) {
+  const panel = $("#report-" + id);
+  const button = $("#report-toggle-" + id);
+  if (!panel || !button) return;
+  const opening = panel.hidden;
+  panel.hidden = !opening;
+  button.setAttribute("aria-expanded", String(opening));
 }
 function renderSearchResult(result) {
   lastSearchResult = result;
@@ -1187,8 +1196,8 @@ function renderSearchResult(result) {
     <span class="hit-number">${i + 1}.</span>
     <div class="hit-content">
       <div><span class="score">${h.score.toFixed(3)}</span>
-        <div class="hit-title"><a href="${esc(h.url)}" target="_blank" rel="noopener" onclick="markResultViewed(${h.position_id},'source')">${esc(h.title)}</a>
-          ${verificationBadge(h)} ${uncertaintyBadges(h)} ${familySignalBadge(h)} <span class="view-marker">${resultViewBadge(h.position_id)}</span></div></div>
+        <div class="hit-title"><a href="${esc(h.url)}" target="_blank" rel="noopener" onclick="markResultViewed(${h.position_id},'source')">${esc(h.title)}</a></div>
+        <div class="hit-badges">${verificationBadge(h)} ${uncertaintyBadges(h)} ${familySignalBadge(h)} <span class="view-marker">${resultViewBadge(h.position_id)}</span></div></div>
       <div class="meta">${esc(h.university)} · ${flag(h.country)} ${esc(h.country || "—")}
         · ${esc(positionTypeLabel(h.position_type))}
         · ${esc(opportunityKindLabel(h.opportunity_kind))}

@@ -1,9 +1,33 @@
 from datetime import date
 
+import pytest
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
-from phd_searcher.service.search_service import SearchService
+from phd_searcher.service.search_service import SearchService, normalize_retrieval_query
 from phd_searcher.typedef.search import SearchBody
+
+
+@pytest.mark.parametrize(
+    ("query", "normalized"),
+    [
+        ("XR", "extended reality"),
+        ("VR interaction", "virtual reality interaction"),
+        ("AR/VR for HCI", "augmented reality/virtual reality for human-computer interaction"),
+        ("realtà estesa e HCI", "extended reality e human-computer interaction"),
+        ("realta virtuale", "virtual reality"),
+        ("calcolo spaziale", "spatial computing"),
+        ("design dell'interazione", "interaction design"),
+        ("progettazione dell\u2019interazione", "interaction design"),
+        ("ingegneria navale", "naval engineering"),
+        ("xray and architecture", "xray and architecture"),
+    ],
+)
+def test_retrieval_query_expands_only_standalone_domain_acronyms(
+    query: str,
+    normalized: str,
+) -> None:
+    assert normalize_retrieval_query(query) == normalized
+
 
 PAYLOAD = {
     "title": "PhD in Robotics",

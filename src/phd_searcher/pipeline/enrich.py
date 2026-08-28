@@ -38,7 +38,10 @@ from phd_searcher.pipeline.normalize import (
 from phd_searcher.pipeline.progress import Progress
 from phd_searcher.pipeline.retry import RetryInterruptedError, clear_retry, retry_async
 from phd_searcher.pipeline.review_audit import append_review_attempt
-from phd_searcher.pipeline.review_context import classify_opportunity_kind_evidence
+from phd_searcher.pipeline.review_context import (
+    classify_opportunity_kind_evidence,
+    select_evidence_document,
+)
 from phd_searcher.pipeline.rule_sweep import RULE_SWEEP_VERSION, apply_rule_sweep
 from phd_searcher.position_types import classify_position
 from phd_searcher.screening import (
@@ -63,7 +66,7 @@ _MAX_SYNTHETIC_FRAGMENT_EVIDENCE_CHARS: int = 6_000
 _MAX_SYNTHETIC_TITLE_OFFSET: int = 1_000
 _MAX_DIRECT_DOCUMENT_BYTES: int = 40 * 1024 * 1024
 _MAX_PDF_EVIDENCE_CHARS: int = 200_000
-_DETAIL_GUARD_VERSION = "detail-guard-v1"
+_DETAIL_GUARD_VERSION = "detail-guard-v2"
 _DETAIL_FETCH_RETRY_VERSION = "v4"
 _LEGACY_REVALIDATION_VERSIONS = ("hybrid-v2", "hybrid-v3", "hybrid-v4")
 _DURABLE_EVIDENCE_STATES = ("needs_evidence", "semantic_uncertain", "fetch_failed")
@@ -457,9 +460,34 @@ def _apply_detail_screening(
         position.url,
         full_description,
         classified,
+        listing_description=position.description,
+        deadline=position.deadline,
+        deadline_raw=position.deadline_raw,
     )
+    if guard.status == "review" and not position.screening_manual:
+        reason = f"post_enrich:{guard.reason}"[:256]
+        position.screening_status = "review"
+        position.screening_reason = reason
+        position.screening_source = "router"
+        position.screening_decision = "review"
+        position.screening_confidence = None
+        position.screening_evidence = None
+        position.screening_model = None
+        position.screening_version = _DETAIL_GUARD_VERSION
+        position.review_state = "ready_deep_review"
+        position.routing_reason = reason
+        position.indexed_at = None
+        return
     if guard.status == "rejected" and not position.screening_manual:
-        quote = detail_rejection_evidence(full_description) or position.title
+        evidence_document = select_evidence_document(
+            position.description,
+            full_description,
+            title=position.title,
+            url=position.url,
+            deadline=position.deadline,
+            deadline_raw=position.deadline_raw,
+        )
+        quote = detail_rejection_evidence(evidence_document) or position.title
         reason = f"post_enrich:{guard.reason}"[:256]
         position.screening_status = "rejected"
         position.screening_reason = reason
@@ -490,9 +518,17 @@ def _apply_detail_screening(
         )
         return
 
+    evidence_document = select_evidence_document(
+        position.description,
+        full_description,
+        title=position.title,
+        url=position.url,
+        deadline=position.deadline,
+        deadline_raw=position.deadline_raw,
+    )
     if getattr(position, "opportunity_kind", "unknown") == "unknown":
         position.opportunity_kind = classify_opportunity_kind_evidence(
-            [position.title, full_description]
+            [position.title, evidence_document]
         )
     if position.opportunity_kind in {"unknown", "information"}:
         # A fetched FAQ/application guide may contain PhD and application

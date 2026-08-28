@@ -17,6 +17,11 @@ from phd_searcher.config.qdrant import QdrantConfig
 from phd_searcher.database.models.position import Position
 from phd_searcher.database.models.university import University
 from phd_searcher.engine.model_helper import ModelHelper
+from phd_searcher.engine.search_contract import validate_search_index_contract
+from phd_searcher.engine.search_documents import (
+    SEARCH_INDEX_CONTRACT_PAYLOAD,
+    build_institution_search_document,
+)
 from phd_searcher.opportunity_kinds import PROGRAMME, SPONTANEOUS, VACANCY
 from phd_searcher.pipeline.progress import Progress
 
@@ -184,6 +189,12 @@ async def run(
     collection = f"{container.get(QdrantConfig).collection}_institutions"
     full_refresh = limit is None and name_like is None
 
+    await validate_search_index_contract(
+        qdrant,
+        collection,
+        model.search_index_contract(institutions=True),
+    )
+
     async with session_maker() as session:
         universities = (await session.execute(select(University).order_by(University.id))).scalars().all()
         position_rows = (
@@ -232,7 +243,17 @@ async def run(
             break
         batch = entities[start : start + _BATCH]
         await progress.tick(f"institutions {start + 1}-{start + len(batch)}")
-        vectors = await model.embed([str(entity["text"]) for entity in batch])
+        vectors = await model.embed_documents(
+            [
+                build_institution_search_document(
+                    name=str(entity["name"]),
+                    university=str(entity["university"]),
+                    kind=str(entity["kind"]),
+                    text=str(entity["text"]),
+                )
+                for entity in batch
+            ]
+        )
         if not await qdrant.collection_exists(collection):
             await qdrant.create_collection(
                 collection,
@@ -244,7 +265,16 @@ async def run(
                 PointStruct(
                     id=cast(int, entity["id"]),
                     vector=vector,
-                    payload={key: value for key, value in entity.items() if key not in ("id", "text")},
+                    payload={
+                        **{
+                            key: value
+                            for key, value in entity.items()
+                            if key not in ("id", "text")
+                        },
+                        SEARCH_INDEX_CONTRACT_PAYLOAD: model.search_index_contract(
+                            institutions=True
+                        ),
+                    },
                 )
                 for entity, vector in zip(batch, vectors, strict=True)
             ],

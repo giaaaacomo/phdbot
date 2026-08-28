@@ -34,6 +34,7 @@ from phd_searcher.pipeline.review_context import (
     compact_text,
     evidence_quote_present,
     explicit_negative_evidence_supports,
+    has_future_deadline_status_conflict,
     negative_evidence_supports,
     opportunity_kind_evidence_supports,
     relative_application_window_is_anchored,
@@ -43,7 +44,7 @@ from phd_searcher.pipeline.rule_sweep import apply_rule_sweep
 from phd_searcher.position_types import POSITION_TYPES, classify_position
 from phd_searcher.screening import screen_position
 
-REVIEW_VERSION = "evidence-v23"
+REVIEW_VERSION = "evidence-v24"
 _CACHE_COMPATIBLE_VERSIONS = (
     "evidence-v7",
     "evidence-v8",
@@ -61,6 +62,7 @@ _CACHE_COMPATIBLE_VERSIONS = (
     "evidence-v20",
     "evidence-v21",
     "evidence-v22",
+    "evidence-v23",
     REVIEW_VERSION,
 )
 _REQUEUE_REJECTED_VERSIONS = (
@@ -246,9 +248,21 @@ class _CachedVerdict:
     decision: EvidenceDecision
 
 
+def _position_document(position: Position) -> str:
+    """Return only evidence attributable to this candidate when possible."""
+    return select_evidence_document(
+        position.description,
+        position.full_description,
+        title=position.title,
+        url=position.url,
+        deadline=getattr(position, "deadline", None),
+        deadline_raw=getattr(position, "deadline_raw", None),
+    )
+
+
 def _review_fingerprint(position: Position, university: University | None) -> str:
     """Exact semantic identity; temporal and institutional fields invalidate reuse."""
-    document = select_evidence_document(position.description, position.full_description)
+    document = _position_document(position)
     institution = (
         f"university:{university.id}:{university.name}:{university.country}"
         if university is not None
@@ -284,7 +298,7 @@ def _cached_verdict(position: Position) -> _CachedVerdict | None:
         return None
     context = build_evidence_context(
         f"{position.title}\n"
-        f"{select_evidence_document(position.description, position.full_description)}"
+        f"{_position_document(position)}"
     )
     if any(not evidence_quote_present(quote, context) for quote in evidence):
         return None
@@ -654,10 +668,7 @@ def _validate_grounded_decision(
 
 def _deterministic_rule_result(position: Position) -> DeepReviewResult | None:
     """Resolve only high-precision non-vacancy pages before spending GPU time."""
-    document = select_evidence_document(
-        position.description,
-        position.full_description,
-    )
+    document = _position_document(position)
     rule = screen_position(
         position.title,
         position.url,
@@ -698,7 +709,7 @@ def _elapsed_deadline_rule_result(
     """Reject an expired, recognizable opportunity before spending GPU time."""
     deadline = position.deadline
     deadline_raw = position.deadline_raw
-    document = select_evidence_document(position.description, position.full_description)
+    document = _position_document(position)
     extracted_raw, extracted_deadline = extract_deadline(document)
     if extracted_deadline is not None:
         # Re-evaluate persisted dates when the parser improves. Older parsing
@@ -713,7 +724,7 @@ def _elapsed_deadline_rule_result(
 
     position_type = classify_position(
         position.title,
-        position.full_description or position.description,
+        document,
         position.position_type,
     )
     if position_type == "other" or not application_evidence_supports(
@@ -725,7 +736,7 @@ def _elapsed_deadline_rule_result(
         return None
     context = build_evidence_context(
         f"{position.title}\n"
-        f"{select_evidence_document(position.description, position.full_description)}"
+        f"{document}"
     )
     if not evidence_quote_present(deadline_raw, context):
         return None
@@ -762,6 +773,38 @@ def _grounding_abstention(position_id: int) -> EvidenceDecision:
     )
 
 
+def _future_deadline_status_conflict_result(
+    position: Position,
+    *,
+    today: date,
+) -> DeepReviewResult | None:
+    """Keep contradictory EURAXESS status evidence reversible.
+
+    A rendered ``CLOSED``/``EXPIRED`` footer normally triggers the cheap
+    deterministic reject.  On a direct EURAXESS job page, however, a grounded
+    future application deadline plus a still-rendered Apply link is a genuine
+    source contradiction.  Neither signal is strong enough to erase the
+    other, so deep review must abstain before rules, caches, or the model can
+    turn the conflict into a confidence-1 rejection.
+    """
+    if not has_future_deadline_status_conflict(
+        str(getattr(position, "description", "") or ""),
+        getattr(position, "full_description", None),
+        title=str(getattr(position, "title", "") or ""),
+        url=str(getattr(position, "url", "") or ""),
+        deadline=getattr(position, "deadline", None),
+        deadline_raw=str(getattr(position, "deadline_raw", "") or ""),
+        today=today,
+    ):
+        return None
+    return DeepReviewResult(
+        decision=_grounding_abstention(position.id),
+        attempts=0,
+        latency_seconds=0,
+        preflight_reason="future_deadline_status_conflict",
+    )
+
+
 def _document_can_resolve(position: Position) -> bool:
     """Whether the deterministic validator could accept any model verdict.
 
@@ -771,7 +814,7 @@ def _document_can_resolve(position: Position) -> bool:
     """
     context = build_evidence_context(
         f"{position.title}\n"
-        f"{select_evidence_document(position.description, position.full_description)}"
+        f"{_position_document(position)}"
     )
     positive_possible = application_evidence_supports(
         [context],
@@ -932,7 +975,7 @@ async def _request_batch(
     contexts = {
         position.id: build_evidence_context(
             f"{position.title}\n"
-            f"{select_evidence_document(position.description, position.full_description)}"
+            f"{_position_document(position)}"
         )
         for position, _university in rows
     }
@@ -1180,7 +1223,7 @@ def _apply_elapsed_deadline_guard(
     cited_raw, cited_deadline = extract_deadline(
         "\n".join(decision.application_evidence)
     )
-    document = select_evidence_document(position.description, position.full_description)
+    document = _position_document(position)
     document_raw, document_deadline = extract_deadline(document)
     if cited_deadline is not None:
         deadline = cited_deadline
@@ -1198,7 +1241,7 @@ def _apply_elapsed_deadline_guard(
 
     context = build_evidence_context(
         f"{position.title}\n"
-        f"{select_evidence_document(position.description, position.full_description)}"
+        f"{document}"
     )
     if not evidence_quote_present(deadline_raw, context):
         return result
@@ -1455,7 +1498,11 @@ async def run(
                 result
                 for position, _university in batch
                 if (
-                    result := _deterministic_rule_result(position)
+                    result := _future_deadline_status_conflict_result(
+                        position,
+                        today=today,
+                    )
+                    or _deterministic_rule_result(position)
                     or _elapsed_deadline_rule_result(position, today=today)
                 ) is not None
             ]
@@ -1512,7 +1559,7 @@ async def run(
                 position.screening_status = accepted_status
                 position.position_type = classify_position(
                     position.title,
-                    position.full_description or position.description,
+                    _position_document(position),
                     decision.position_type,
                 )
                 position.opportunity_kind = decision.opportunity_kind

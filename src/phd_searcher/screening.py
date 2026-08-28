@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date
 
-from phd_searcher.pipeline.review_context import opportunity_kind_evidence_supports
+from phd_searcher.pipeline.review_context import (
+    has_future_deadline_status_conflict,
+    opportunity_kind_evidence_supports,
+    select_evidence_document,
+)
 
 SCREENING_STATUSES = ("pending", "eligible", "review", "rejected", "quarantine")
 
@@ -321,9 +326,33 @@ def screen_enriched_position(
     url: str,
     description: str,
     position_type: str = "other",
+    *,
+    listing_description: str | None = None,
+    deadline: date | None = None,
+    deadline_raw: str | None = None,
+    today: date | None = None,
 ) -> ScreeningDecision:
     """Guard an enriched eligible record against explicit contradictions."""
-    decision = screen_position(title, url, description, position_type)
+    evidence_document = select_evidence_document(
+        listing_description if listing_description is not None else description,
+        description,
+        title=title,
+        url=url,
+        deadline=deadline,
+        deadline_raw=deadline_raw,
+        today=today,
+    )
+    if has_future_deadline_status_conflict(
+        listing_description if listing_description is not None else description,
+        description,
+        title=title,
+        url=url,
+        deadline=deadline,
+        deadline_raw=deadline_raw,
+        today=today,
+    ):
+        return ScreeningDecision("review", "future_deadline_status_conflict")
+    decision = screen_position(title, url, evidence_document, position_type)
     if decision.status == "rejected" and decision.reason in {
         "explicitly_closed_or_unavailable",
         "selection_result_page",
@@ -332,7 +361,7 @@ def screen_enriched_position(
         "administrative_non_vacancy_page",
     }:
         return decision
-    if detail_rejection_evidence(description):
+    if detail_rejection_evidence(evidence_document):
         return ScreeningDecision("rejected", "detail_explicitly_closed")
     if decision.status == "rejected":
         return ScreeningDecision("eligible", "detail_no_explicit_contradiction")

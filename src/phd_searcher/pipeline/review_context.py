@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, timedelta
+from urllib.parse import urlsplit
 
 from phd_searcher.clock import local_today
 from phd_searcher.opportunity_kinds import (
@@ -14,7 +15,7 @@ from phd_searcher.opportunity_kinds import (
     VACANCY,
     OpportunityKind,
 )
-from phd_searcher.pipeline.normalize import parse_dates, parse_deadline
+from phd_searcher.pipeline.normalize import extract_deadline, parse_dates, parse_deadline
 
 _SPACE = re.compile(r"\s+")
 _WORD = re.compile(r"\w+", re.UNICODE)
@@ -26,6 +27,12 @@ _MAX_QUOTE_CHARS = 500
 _UNUSABLE_DOCUMENT = re.compile(
     r"^\s*(?:```(?:json)?\s*)?\{\s*[\"']?error_type[\"']?\s*:|"
     r"\b(?:languagefolder|captcha|access denied|page not found)\b",
+    re.I,
+)
+_EURAXESS_JOB_PATH = re.compile(r"^/jobs/\d+/?$")
+_EURAXESS_JOB_INFORMATION = re.compile(r"\s+##\s+Job Information\b", re.I)
+_EURAXESS_SHARE_FOOTER = re.compile(
+    r"\s+#{4,6}\s+Share this page\b",
     re.I,
 )
 _EVIDENCE_SIGNAL = re.compile(
@@ -353,19 +360,123 @@ def _grounding_text(value: str) -> str:
     return text.casefold()
 
 
-def select_evidence_document(description: str, full_description: str | None) -> str:
+def _euraxess_job_page(url: str) -> bool:
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+    return (
+        parsed.hostname == "euraxess.ec.europa.eu"
+        and _EURAXESS_JOB_PATH.fullmatch(parsed.path) is not None
+    )
+
+
+def _euraxess_candidate_document(
+    fetched: str,
+    *,
+    title: str,
+    url: str,
+) -> str | None:
+    """Return one attributable EURAXESS job block without hiding its status.
+
+    The candidate ends immediately before the social/share and site footer.
+    ``STATUS: CLOSED/EXPIRED`` and the Apply link occur before that boundary on
+    real pages, so they deliberately remain available to screening and review.
+    """
+    if not title.strip() or not _euraxess_job_page(url):
+        return None
+
+    folded = fetched.casefold()
+    title_start = folded.find(compact_text(title).casefold())
+    if title_start < 0:
+        return None
+    information = _EURAXESS_JOB_INFORMATION.search(fetched, title_start)
+    if information is None:
+        return None
+    end = _EURAXESS_SHARE_FOOTER.search(fetched, information.end())
+    if end is None:
+        return None
+    return fetched[title_start : end.start()].strip()
+
+
+def has_future_deadline_status_conflict(
+    description: str,
+    full_description: str | None,
+    *,
+    title: str,
+    url: str,
+    deadline: date | None,
+    deadline_raw: str | None = None,
+    today: date | None = None,
+) -> bool:
+    """Detect a contradictory direct job page without deciding which side wins.
+
+    This is intentionally an uncertainty signal, never proof that the call is
+    open.  It requires a current/future candidate deadline, the candidate's
+    own EURAXESS job block, a trailing explicit status, and a rendered Apply
+    link.  Genuine body-level withdrawals therefore remain hard rejections.
+    """
+    current_day = today or local_today()
+    if deadline is None or deadline < current_day:
+        return False
+    fetched = compact_text(full_description or "")
+    candidate = _euraxess_candidate_document(
+        fetched,
+        title=title,
+        url=url,
+    )
+    if candidate is None:
+        return False
+    contact = re.search(r"\s+##\s+Contact\b", candidate, re.I)
+    if contact is None:
+        return False
+    trailing = candidate[contact.end() :]
+    closed = _EXPLICIT_CLOSED_SIGNAL.search(trailing)
+    if closed is None or not re.search(r"\[Apply now\]\(", trailing[closed.end() :], re.I):
+        return False
+    raw_deadline = compact_text(deadline_raw or "")
+    if raw_deadline:
+        if raw_deadline.casefold() not in candidate.casefold():
+            return False
+        candidate_deadline = parse_deadline(raw_deadline)
+    else:
+        _deadline_quote, candidate_deadline = extract_deadline(candidate)
+    return candidate_deadline == deadline
+
+
+def select_evidence_document(
+    description: str,
+    full_description: str | None,
+    *,
+    title: str | None = None,
+    url: str | None = None,
+    deadline: date | None = None,
+    deadline_raw: str | None = None,
+    today: date | None = None,
+) -> str:
     """Prefer fetched detail text, but never hide usable inline evidence behind an error page.
 
     Some crawlers return a syntactically non-empty error payload (for example
     ``LanguageFolder``).  Treating that payload as the dossier discarded the
     candidate-specific description that was already stored by the listing
     scraper.  This fallback is deliberately narrow: ordinary short or
-    ambiguous pages are not promoted into evidence.
+    ambiguous pages are not promoted into evidence.  When candidate identity
+    is supplied, a direct EURAXESS page is reduced to its structurally
+    attributable job block. Explicit CLOSED/EXPIRED markers remain inside that
+    block; a separate uncertainty signal handles deadline/status conflicts.
     """
     inline = compact_text(description)
     fetched = compact_text(full_description or "")
     if not fetched or _UNUSABLE_DOCUMENT.search(fetched):
         return inline
+    if title and url:
+        candidate = _euraxess_candidate_document(
+            fetched,
+            title=title,
+            url=url,
+        )
+        if candidate is not None:
+            return candidate
     return fetched
 
 

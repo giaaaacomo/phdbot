@@ -119,6 +119,7 @@ def _position(
     title: str | None = None,
     url: str | None = None,
     description: str | None = None,
+    full_description: str | None = None,
     position_type: str = "phd",
     review_state: str = "semantic_uncertain",
     routing_reason: str | None = None,
@@ -136,6 +137,7 @@ def _position(
         url=url or f"https://opportunity.example/{position_id}",
         title=title or f"Opportunity {position_id}",
         description=description or f"Description {position_id}",
+        full_description=full_description,
         opportunity_kind=opportunity_kind,
         position_type=position_type,
         screening_status=screening_status,
@@ -221,6 +223,37 @@ def test_provisional_gate_exposes_strong_title_as_labelled_high_recall_lead() ->
     )
 
     assert _verification_metadata(position, date(2026, 8, 9)) == (
+        "probable",
+        None,
+        60,
+        ("open_status", "details"),
+    )
+
+
+def test_provisional_gate_keeps_conflicting_euraxess_status_as_uncertain_lead() -> None:
+    title = "PhD Position eXtended Reality for Inclusive Vehicle Interaction"
+    full_description = (
+        f"navigation {title} ## Job Information "
+        "Application Deadline 30 Aug 2026 - 21:59 (UTC) "
+        "## Offer Description Applications are invited for this doctoral position. "
+        "## Work Locations Delft ## Contact City Delft "
+        "STATUS: EXPIRED [Apply now](https://academictransfer.example/apply/) "
+        "##### Share this page"
+    )
+    position = _position(
+        18,
+        VACANCY,
+        screening_status="eligible",
+        screening_manual=False,
+        title=title,
+        url="https://euraxess.ec.europa.eu/jobs/453992",
+        description="Inclusive Virtual Reality research position.",
+        full_description=full_description,
+        deadline=date(2026, 8, 30),
+    )
+    position.deadline_raw = "30 Aug 2026 - 21:59 (UTC)"
+
+    assert _verification_metadata(position, date(2026, 8, 26)) == (
         "probable",
         None,
         60,
@@ -374,6 +407,80 @@ def test_provisional_gate_allows_euraxess_but_not_weak_orphan() -> None:
     assert not is_provisional_eligible(
         weak_orphan,
         today=date(2026, 8, 9),
+    )
+
+
+@pytest.mark.parametrize(
+    ("position_id", "title", "deadline", "deadline_raw"),
+    [
+        (
+            148,
+            "PhD Position eXtended Reality for Inclusive Automated Vehicle Interaction",
+            date(2026, 8, 30),
+            "30 Aug 2026 - 21:59 (UTC)",
+        ),
+        (
+            1210,
+            "Biodesign for Interaction: An Exploratory Approach (Biodesign for Interaction, B4I) - 2026_IDR_DESIGN_8",
+            date(2026, 8, 31),
+            "31 Aug 2026 - 12:00 (UTC)",
+        ),
+        (
+            4998,
+            "Postdoc in Application of eXtended Reality for Inclusive Automated Vehicle and Road User Interaction",
+            date(2026, 8, 30),
+            "30 Aug 2026 - 21:59 (UTC)",
+        ),
+        (
+            6591,
+            "DESIGN AND ARCHITECTURE OF PHYSIOLOGY-AWARE ADAPTIVE SYSTEMS FOR WELL-BEING IN EXTENDED REALITY - 2026_IDR_DEIB_52",
+            date(2026, 9, 1),
+            "1 Sep 2026 - 12:00 (UTC)",
+        ),
+    ],
+)
+def test_euraxess_status_conflict_keeps_current_xr_candidates_as_uncertain(
+    position_id: int,
+    title: str,
+    deadline: date,
+    deadline_raw: str,
+) -> None:
+    full_description = (
+        f"navigation {title} ## Job Information Organisation Example University "
+        f"Application Deadline {deadline_raw} Country Italy "
+        "## Offer Description Applications are invited for this research position in "
+        "interaction design, Virtual Reality and eXtended Reality. "
+        "## Work Locations Example City ## Contact Example University "
+        "STATUS: EXPIRED [Apply now](https://external.example/apply/) "
+        "##### Share this page"
+    )
+    position = _position(
+        position_id,
+        VACANCY,
+        screening_status="eligible",
+        screening_manual=False,
+        screening_source="rules",
+        title=title,
+        url=f"https://euraxess.ec.europa.eu/jobs/{position_id}",
+        description="Virtual Reality and interaction design research position.",
+        full_description=full_description,
+        deadline=deadline,
+        position_type=(
+            "postdoc"
+            if position_id == 4998
+            else "research_fellowship"
+            if position_id in {1210, 6591}
+            else "phd"
+        ),
+        review_state="resolved",
+    )
+    position.deadline_raw = deadline_raw
+
+    assert _verification_metadata(position, date(2026, 8, 26)) == (
+        "probable",
+        None,
+        60,
+        ("open_status", "details"),
     )
 
 
@@ -658,13 +765,15 @@ async def test_upsert_derives_only_provisional_metadata_and_preserves_confidence
     )
     provisional.scraped_at = datetime(2026, 8, 9)
     verified.scraped_at = datetime(2026, 8, 9)
-    model = SimpleNamespace(
-        embed=AsyncMock(
+    embed_documents = AsyncMock(
             return_value=[
                 [1.0, 0.0, 0.0, 0.0],
                 [0.0, 1.0, 0.0, 0.0],
             ]
         )
+    model = SimpleNamespace(
+        embed_documents=embed_documents,
+        search_index_contract=lambda: "candidate-compact-v2|raw-v1|test/model",
     )
 
     await _embed_and_upsert(
@@ -697,6 +806,12 @@ async def test_upsert_derives_only_provisional_metadata_and_preserves_confidence
     assert payload_by_id[21]["uncertainty_flags"] == []
     assert payload_by_id[21]["position_type"] == "other"
     assert payload_by_id[21]["opportunity_kind"] == PROGRAMME
+    assert payload_by_id[20]["_phdbot_search_index_contract"] == (
+        "candidate-compact-v2|raw-v1|test/model"
+    )
+    embedded_documents = embed_documents.await_args.args[0]
+    assert "Position type: internship" in embedded_documents[0]
+    assert "Position type: other" in embedded_documents[1]
     assert provisional.position_type == "other"
     assert provisional.opportunity_kind == UNKNOWN
 

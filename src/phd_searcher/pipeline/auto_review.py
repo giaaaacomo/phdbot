@@ -28,6 +28,7 @@ from phd_searcher.pipeline.review_audit import append_review_attempt
 from phd_searcher.pipeline.review_context import (
     evidence_quote_present,
     opportunity_kind_evidence_supports,
+    select_evidence_document,
     triage_evidence_supports,
 )
 from phd_searcher.position_types import POSITION_TYPES, classify_position
@@ -153,6 +154,18 @@ class _IncompleteAutomaticReviewError(RuntimeError):
 
 def _compact(value: str, limit: int = _MAX_DESCRIPTION) -> str:
     return _SPACE.sub(" ", value).strip()[:limit]
+
+
+def _position_document(position: Position) -> str:
+    """Return only evidence attributable to this candidate when possible."""
+    return select_evidence_document(
+        position.description,
+        position.full_description,
+        title=position.title,
+        url=position.url,
+        deadline=getattr(position, "deadline", None),
+        deadline_raw=getattr(position, "deadline_raw", None),
+    )
 
 
 def _normalized_text_length(value: str) -> int:
@@ -490,7 +503,7 @@ def _prompt(rows: list[tuple[Position, University | None]]) -> str:
             "university": university.name if university else position.institution_name,
             "country": university.country if university else position.institution_country,
             "current_type": position.position_type,
-            "description": _compact(position.full_description or position.description),
+            "description": _compact(_position_document(position)),
         }
         for position, university in rows
     ]
@@ -528,7 +541,7 @@ async def _native_ollama_review(
     accepted: dict[int, AutomaticDecision] = {}
     evidence_contexts = {
         position.id: _compact(
-            f"{position.title}\n{position.full_description or position.description}"
+            f"{position.title}\n{_position_document(position)}"
         )
         for position, _university in rows
     }
@@ -798,7 +811,7 @@ async def _apply_review_batch(
         position.opportunity_kind = automatic_decision.opportunity_kind
         position.position_type = classify_position(
             position.title,
-            position.full_description or position.description,
+            _position_document(position),
             automatic_decision.position_type,
         )
         position.screening_reason = f"llm:{automatic_decision.reason}"[:256]
@@ -814,7 +827,7 @@ async def _apply_review_batch(
             if needs_detail_before_reject
             else _review_state(
                 accepted_status,
-                position.full_description or position.description,
+                _position_document(position),
             )
         )
         position.routing_reason = (
@@ -886,7 +899,7 @@ async def run(
             rule_decision = screen_position(
                 title=position.title,
                 url=position.url,
-                description=position.full_description or position.description,
+                description=_position_document(position),
                 position_type=position.position_type,
             )
             if (

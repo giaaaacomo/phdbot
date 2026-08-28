@@ -1,0 +1,74 @@
+{
+  "schema_version": 2,
+  "name": "PHDBOT automatic-review adjudication canary",
+  "version": "auto-review-gold-v1.1-20260827",
+  "labelled_at": "2026-08-27",
+  "valid_until": "2026-10-10",
+  "notes": "Balanced human adjudication of four attributable academic opportunities and four non-opportunities, including academically adjacent edge cases. Labels describe the stored evidence snapshot, not the previous model verdict.",
+  "labels": [
+    {
+      "position_id": 6049,
+      "expected_status": "eligible",
+      "accepted_position_types": ["assistantship", "research_staff"],
+      "accepted_opportunity_kinds": ["vacancy"],
+      "content_sha256": "0a59be27cfa97628227dbcc315672c87c6a30b7e12ef6cae95232598a5079716",
+      "rationale": "A named scientific-assistant role in antenna-array research with candidate-facing vacancy text."
+    },
+    {
+      "position_id": 8733,
+      "expected_status": "eligible",
+      "accepted_position_types": ["faculty"],
+      "accepted_opportunity_kinds": ["vacancy"],
+      "content_sha256": "2b6e77e8ef4b5545258ef62989215201fa996e8f00d0b21a1b65731e25d157be",
+      "rationale": "A specific senior-lecturer vacancy in digitalisation of agriculture."
+    },
+    {
+      "position_id": 10972,
+      "expected_status": "eligible",
+      "accepted_position_types": ["faculty", "assistantship", "research_staff"],
+      "accepted_opportunity_kinds": ["vacancy"],
+      "content_sha256": "28337ac340d809da23a71750615cf560c52c7e9653682420bce319272dd39060",
+      "rationale": "A referenced full-time Research Assistant Professor vacancy inviting applications."
+    },
+    {
+      "position_id": 12032,
+      "expected_status": "eligible",
+      "accepted_position_types": ["postdoc"],
+      "accepted_opportunity_kinds": ["vacancy"],
+      "content_sha256": "b2123ce59978bad7a01a3899c6842737b76c46ad1ea0ca0c7f454c12a054188e",
+      "rationale": "The evidence explicitly advertises postdoctoral positions for qualified applicants."
+    },
+    {
+      "position_id": 20045,
+      "expected_status": "rejected",
+      "accepted_position_types": [],
+      "accepted_opportunity_kinds": [],
+      "content_sha256": "9455afe94cd0e9db053022d7db7d6aa1623bc9b45cb5ee3cf01d848db83bab35",
+      "rationale": "University-sports navigation and course catalogue, not an academic opportunity."
+    },
+    {
+      "position_id": 20830,
+      "expected_status": "rejected",
+      "accepted_position_types": [],
+      "accepted_opportunity_kinds": [],
+      "content_sha256": "6c292855719e1deebd343fd04934f640a8d884648d75ff773c2b4bc3ee7f40f4",
+      "rationale": "A general Audiology subject and degree-information page, not a current opening."
+    },
+    {
+      "position_id": 22263,
+      "expected_status": "rejected",
+      "accepted_position_types": [],
+      "accepted_opportunity_kinds": [],
+      "content_sha256": "0a55ff0e1698029eed941d52eab8b4427cebfbe201992b5d5a7cda7c35e3a944",
+      "rationale": "Administrative vocational training requiring secondary-school qualifications, outside PHDBOT's academic-opportunity scope."
+    },
+    {
+      "position_id": 25226,
+      "expected_status": "rejected",
+      "accepted_position_types": [],
+      "accepted_opportunity_kinds": [],
+      "content_sha256": "b7424b53c54305d5d09a08b268063bb88a6d310aaf85b1a9860c1980adcd4891",
+      "rationale": "A 2022 thesis-communication competition explicitly marked CLOSED with an elapsed deadline."
+    }
+  ]
+}

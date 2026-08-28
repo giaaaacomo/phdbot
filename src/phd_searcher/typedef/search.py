@@ -35,7 +35,7 @@ class SearchBody(BaseModel):
     posted_after: date | None = None
     posted_before: date | None = None
     compensation_min: float | None = Field(default=None, ge=0)
-    min_score: float = Field(default=0.5, ge=-1, le=1)
+    min_score: float = Field(default=0.6, ge=-1, le=1)
     sort_by: Literal[
         "relevance",
         "uncertainty",

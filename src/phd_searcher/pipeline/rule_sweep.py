@@ -20,7 +20,7 @@ from phd_searcher.pipeline.review_context import (
 )
 from phd_searcher.screening import ScreeningDecision, screen_position
 
-RULE_SWEEP_VERSION = "rules-v12"
+RULE_SWEEP_VERSION = "rules-v13"
 
 _GENERIC_PAGE_REJECTIONS = frozenset({"navigation_link", "non_opportunity_page"})
 _GROUNDED_POSITIVE_SOURCES = frozenset({"llm", "cache"})
@@ -232,7 +232,14 @@ def sweep_decision(position: Position) -> ScreeningDecision:
     return screen_position(
         position.title,
         position.url,
-        select_evidence_document(position.description, position.full_description),
+        select_evidence_document(
+            position.description,
+            position.full_description,
+            title=position.title,
+            url=position.url,
+            deadline=getattr(position, "deadline", None),
+            deadline_raw=getattr(position, "deadline_raw", None),
+        ),
         position.position_type,
     )
 

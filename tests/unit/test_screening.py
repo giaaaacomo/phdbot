@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 
 from phd_searcher.screening import (
@@ -537,6 +539,52 @@ def test_enriched_guard_rejects_only_explicit_non_negated_closure():
         detail_rejection_evidence("The SSCP DTP no longer accepts applications")
         == "The SSCP DTP no longer accepts applications"
     )
+
+
+def test_enriched_guard_uses_candidate_specific_euraxess_evidence():
+    title = "Postdoc in eXtended Reality for Inclusive Vehicle Interaction"
+    fetched = (
+        f"navigation {title} ## Job Information "
+        "Application Deadline 30 Aug 2026 - 21:59 (UTC) "
+        "## Offer Description Applications are invited for this postdoctoral position. "
+        "## Work Locations Delft ## Contact City Delft "
+        "STATUS: EXPIRED [Apply now](https://academictransfer.example/apply/) "
+        "##### Share this page"
+    )
+
+    decision = screen_enriched_position(
+        title,
+        "https://euraxess.ec.europa.eu/jobs/453993",
+        fetched,
+        "postdoc",
+        listing_description="Inclusive Virtual Reality research position.",
+        deadline=date(2026, 8, 30),
+        today=date(2026, 8, 26),
+    )
+
+    assert decision == ScreeningDecision("review", "future_deadline_status_conflict")
+
+
+def test_enriched_guard_still_rejects_closed_status_inside_candidate_body():
+    title = "Postdoc in eXtended Reality for Inclusive Vehicle Interaction"
+    fetched = (
+        f"navigation {title} ## Job Information "
+        "Application Deadline 30 Aug 2026 - 21:59 (UTC) "
+        "## Offer Description Application status: CLOSED. "
+        "## Work Locations Delft ## Contact City Delft"
+    )
+
+    decision = screen_enriched_position(
+        title,
+        "https://euraxess.ec.europa.eu/jobs/453993",
+        fetched,
+        "postdoc",
+        listing_description="Inclusive Virtual Reality research position.",
+        deadline=date(2026, 8, 30),
+        today=date(2026, 8, 26),
+    )
+
+    assert decision == ScreeningDecision("rejected", "detail_explicitly_closed")
 
 
 def test_spanish_expired_application_window_is_explicit_and_negation_is_safe():

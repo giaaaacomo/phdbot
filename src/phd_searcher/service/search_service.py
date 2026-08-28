@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time as monotonic_time
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime, time
@@ -29,6 +30,51 @@ _ECB_RATES_URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
 _RATES_TTL_SECONDS = 12 * 60 * 60
 _rates: dict[str, float] = {"EUR": 1.0}
 _rates_loaded_at = 0.0
+_RETRIEVAL_ACRONYMS = {
+    "xr": "extended reality",
+    "vr": "virtual reality",
+    "ar": "augmented reality",
+    "hci": "human-computer interaction",
+}
+_RETRIEVAL_PHRASES = {
+    "design dell'interazione": "interaction design",
+    "design dell\u2019interazione": "interaction design",
+    "progettazione dell'interazione": "interaction design",
+    "progettazione dell\u2019interazione": "interaction design",
+    "ingegneria navale": "naval engineering",
+    "calcolo spaziale": "spatial computing",
+    "realtà estesa": "extended reality",
+    "realta estesa": "extended reality",
+    "realtà virtuale": "virtual reality",
+    "realta virtuale": "virtual reality",
+}
+_RETRIEVAL_PHRASE = re.compile(
+    "|".join(
+        re.escape(phrase)
+        for phrase in sorted(_RETRIEVAL_PHRASES, key=len, reverse=True)
+    ),
+    re.I,
+)
+_RETRIEVAL_ACRONYM = re.compile(
+    r"\b(?:" + "|".join(_RETRIEVAL_ACRONYMS) + r")\b",
+    re.I,
+)
+
+
+def normalize_retrieval_query(value: str) -> str:
+    """Canonicalize audited domain phrases and unambiguous acronyms.
+
+    Replacing the token preserves the rest of a user's query and avoids the
+    dilution observed when a long synonym list is appended to short queries.
+    """
+    value = _RETRIEVAL_PHRASE.sub(
+        lambda match: _RETRIEVAL_PHRASES[match.group(0).casefold()],
+        value,
+    )
+    return _RETRIEVAL_ACRONYM.sub(
+        lambda match: _RETRIEVAL_ACRONYMS[match.group(0).casefold()],
+        value,
+    )
 
 
 def _payload_confidence(value: object) -> float | None:
@@ -84,7 +130,11 @@ class SearchService:
         self._collection = config.collection
 
     async def search(self, body: SearchBody) -> SearchResult:
-        vector = (await self._model.embed([body.query]))[0]
+        vector = (
+            await self._model.embed_queries(
+                [normalize_retrieval_query(body.query)]
+            )
+        )[0]
         must: list[FieldCondition] = []
         must_not: list[FieldCondition] = []
         if body.mode == "verified_only":
