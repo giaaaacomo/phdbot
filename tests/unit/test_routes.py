@@ -48,6 +48,10 @@ def test_dashboard_source_contains_expected_controls():
     assert 'SEARCH_HISTORY_KEY = "phdbot.searchHistory.v1"' in dashboard
     assert "Recent / frequent:" not in dashboard
     assert "query-history-clear" not in dashboard
+    assert "selectedSearchPills.join(\" + \")" in dashboard
+    assert 'button.setAttribute("aria-pressed", String(selected))' in dashboard
+    assert "toggleSearchPill(entry.query)" in dashboard
+    assert "button.query-pill.active" in dashboard
     assert "each part is searched separately" in dashboard
     assert "Filter data unavailable" in dashboard
     assert "const hasIncomeFilter" in dashboard

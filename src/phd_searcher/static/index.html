@@ -164,6 +164,7 @@
   .query-history[hidden] { display: none; }
   button.query-pill { flex: 0 0 auto; max-width: min(34ch, 55vw); padding: 4px 10px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  button.query-pill.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
   details.multi-select { position: relative; }
   details.multi-select > summary { list-style: none; cursor: pointer; background: var(--bg); color: var(--text);
     border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1028,6 +1029,7 @@ let lastSearchBody = null;
 let lastSearchResult = null;
 const SEARCH_HISTORY_KEY = "phdbot.searchHistory.v1";
 const SEARCH_HISTORY_LIMIT = 30;
+let selectedSearchPills = [];
 let searchHistory = (() => {
   try {
     const stored = JSON.parse(localStorage.getItem(SEARCH_HISTORY_KEY) || "[]");
@@ -1050,13 +1052,26 @@ function orderedSearchHistory() {
     if (recent[i]) add(recent[i]);
     if (frequent[i]) add(frequent[i]);
   }
-  return ordered;
+  return ordered.sort((a, b) =>
+    Number(selectedSearchPills.some(item => searchPillKey(item) === searchPillKey(b.query))) -
+    Number(selectedSearchPills.some(item => searchPillKey(item) === searchPillKey(a.query)))
+  );
 }
 function fitSearchHistoryPills() {
   const container = $("#s-query-history");
   if (!container || container.clientWidth === 0) return;
   const pills = () => [...container.querySelectorAll("button.query-pill")];
   while (container.scrollWidth > container.clientWidth && pills().length > 1) pills().at(-1).remove();
+}
+function searchPillKey(query) { return query.trim().toLocaleLowerCase(); }
+function toggleSearchPill(query) {
+  const key = searchPillKey(query);
+  const index = selectedSearchPills.findIndex(item => searchPillKey(item) === key);
+  if (index >= 0) selectedSearchPills.splice(index, 1);
+  else selectedSearchPills.push(query);
+  $("#s-query").value = selectedSearchPills.join(" + ");
+  renderSearchHistory();
+  $("#s-query").focus();
 }
 function renderSearchHistory() {
   const container = $("#s-query-history");
@@ -1068,10 +1083,12 @@ function renderSearchHistory() {
   entries.forEach(entry => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "act ghost query-pill";
+    const selected = selectedSearchPills.some(item => searchPillKey(item) === searchPillKey(entry.query));
+    button.className = `act ghost query-pill${selected ? " active" : ""}`;
+    button.setAttribute("aria-pressed", String(selected));
     button.textContent = entry.query;
-    button.title = `${entry.count} search${entry.count === 1 ? "" : "es"} · last used ${new Date(entry.lastUsed).toLocaleString()}`;
-    button.onclick = () => { $("#s-query").value = entry.query; doSearch(); };
+    button.title = `${selected ? "Remove from" : "Add to"} combined search · ${entry.count} search${entry.count === 1 ? "" : "es"} · last used ${new Date(entry.lastUsed).toLocaleString()}`;
+    button.onclick = () => toggleSearchPill(entry.query);
     container.append(button);
   });
   requestAnimationFrame(fitSearchHistoryPills);
@@ -1216,6 +1233,11 @@ $("#btn-search-reset").onclick = () => {
 };
 $("#btn-search").onclick = doSearch;
 $("#s-query").addEventListener("keydown", e => { if (e.key === "Enter") doSearch(); });
+$("#s-query").addEventListener("input", () => {
+  if (!selectedSearchPills.length) return;
+  selectedSearchPills = [];
+  renderSearchHistory();
+});
 let searchLoading = false;
 function setSearchLoading(active) {
   searchLoading = active;
