@@ -46,7 +46,8 @@ def test_dashboard_source_contains_expected_controls():
     assert '<th class="row-number"' in dashboard
     assert "Searching indexed opportunities" in dashboard
     assert 'SEARCH_HISTORY_KEY = "phdbot.searchHistory.v1"' in dashboard
-    assert "Recent / frequent:" in dashboard
+    assert "Recent / frequent:" not in dashboard
+    assert "query-history-clear" not in dashboard
     assert "each part is searched separately" in dashboard
     assert "Filter data unavailable" in dashboard
     assert "const hasIncomeFilter" in dashboard

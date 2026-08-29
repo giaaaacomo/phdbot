@@ -162,7 +162,6 @@
   .query-history { display: flex; flex-wrap: nowrap; align-items: center; gap: 7px; margin-top: 9px;
     min-width: 0; overflow: hidden; white-space: nowrap; }
   .query-history[hidden] { display: none; }
-  .query-history-label { flex: 0 0 auto; color: var(--muted); font-size: 12px; }
   button.query-pill { flex: 0 0 auto; max-width: min(34ch, 55vw); padding: 4px 10px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
   details.multi-select { position: relative; }
@@ -1066,21 +1065,6 @@ function renderSearchHistory() {
   container.replaceChildren();
   container.hidden = entries.length === 0;
   if (!entries.length) return;
-  const label = document.createElement("span");
-  label.className = "query-history-label";
-  label.textContent = "Recent / frequent:";
-  container.append(label);
-  const clear = document.createElement("button");
-  clear.type = "button";
-  clear.className = "act ghost query-history-clear";
-  clear.textContent = "Clear";
-  clear.title = "Remove locally saved search history";
-  clear.onclick = () => {
-    searchHistory = [];
-    try { localStorage.removeItem(SEARCH_HISTORY_KEY); } catch {}
-    renderSearchHistory();
-  };
-  container.append(clear);
   entries.forEach(entry => {
     const button = document.createElement("button");
     button.type = "button";
