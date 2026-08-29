@@ -111,6 +111,10 @@ _PERIODS = {
 _COMPENSATION_LINE_RE = re.compile(
     r"(?im)^.*(?:salary|stipend|compensation|remuneration|gross|net salary|€|\bEUR\b|\bUSD\b|\bGBP\b|\bCHF\b).*$"
 )
+_LABELLED_COMPENSATION_RE = re.compile(
+    r"(?im)^(?P<label>salary|stipend|compensation|remuneration|pay(?:\s+range)?)"
+    r"\s*:?\s*\n(?:[ \t]*\n)*[ \t]*(?P<value>[^\n]{1,500})"
+)
 _COMPENSATION_SIGNAL_RE = re.compile(
     r"\b(?:salary|stipend|compensation|remuneration|pay(?:ment|grade)?|wages?|gross|net|"
     r"scholarships?|allowances?|benefits? package|financial conditions|"
@@ -123,6 +127,14 @@ _DURATION_LINE_RE = re.compile(
     r"(?im)^.*(?:duration.{0,80}\b\d+\s*(?:months?|years?)|"
     r"(?:contract|appointment|funding period).{0,80}\b\d+\s*(?:months?|years?)|"
     r"\b\d+\s*months?\b.{0,40}(?:contract|position|funding)).*$"
+)
+_CONTRACT_DURATION_RE = re.compile(
+    r"\b(?:contract(?:\s+type)?|appointment(?:\s+type)?|term\s+of\s+employment)\b"
+    r"\s*(?:[:\-\u2013\u2014]|\r?\n)*\s*"
+    r"(?P<value>permanent|open[- ]ended|indefinite|"
+    r"fixed[- ]term(?:\s+(?:for|of)\s+\d+\s*(?:months?|years?))?|"
+    r"temporary(?:\s+(?:for|of)\s+\d+\s*(?:months?|years?))?)\b",
+    re.IGNORECASE,
 )
 _PUBLISHED_LINE_RE = re.compile(r"(?im)^.*(?:posted on|publication date|published on|data di pubblicazione).*$")
 _RESEARCH_GROUP_LINE_RE = re.compile(
@@ -263,6 +275,12 @@ def _position_url(title: str, href: str, base_url: str) -> str:
     )
     if resolved and not homepage_link:
         return resolved
+    return synthetic_position_url(title, base_url)
+
+
+def synthetic_position_url(title: str, base_url: str) -> str:
+    """Stable fallback identity used only when a listing exposes no detail URL."""
+    base = urlsplit(base_url)
     fragment = f"position-{sha256(title.casefold().encode()).hexdigest()[:16]}"
     return urlunsplit((base.scheme, base.netloc, base.path, base.query, fragment))
 
@@ -309,11 +327,27 @@ def _plausible_compensation(raw: str | None) -> bool:
 def extract_terms(text: str) -> tuple[str | None, str | None, str | None]:
     """Trova righe candidate nel dettaglio completo, senza inventare valori assenti."""
     compensation = _COMPENSATION_LINE_RE.search(text)
+    labelled_compensation = _LABELLED_COMPENSATION_RE.search(text)
+    compensation_text = compensation.group().strip()[:512] if compensation else None
+    if labelled_compensation:
+        candidate = (
+            f"{labelled_compensation.group('label')}: "
+            f"{labelled_compensation.group('value').strip()}"
+        )[:512]
+        if _plausible_compensation(candidate):
+            compensation_text = candidate
     duration = _DURATION_LINE_RE.search(text)
+    contract = _CONTRACT_DURATION_RE.search(text) if duration is None else None
     published = _PUBLISHED_LINE_RE.search(text)
     return (
-        compensation.group().strip()[:512] if compensation else None,
-        duration.group().strip()[:256] if duration else None,
+        compensation_text,
+        (
+            duration.group().strip()[:256]
+            if duration
+            else f"Contract: {contract.group('value').strip()}"[:256]
+            if contract
+            else None
+        ),
         published.group().strip()[:256] if published else None,
     )
 

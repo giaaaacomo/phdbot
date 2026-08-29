@@ -13,6 +13,7 @@ from phd_searcher.pipeline.enrich import (
     _LEGACY_REVALIDATION_VERSIONS,
     _apply_detail_screening,
     _apply_extracted_detail_metadata,
+    _clean_detail_document,
     _cooldown_seconds,
     _crawl_detail_document,
     _detail_selection_priority,
@@ -28,6 +29,7 @@ from phd_searcher.pipeline.enrich import (
     _is_euraxess_url,
     _is_rate_limit,
     _is_supported_detail_url,
+    _job_posting_metadata,
     _looks_like_direct_document,
     _looks_like_unsupported_asset,
     _needs_legacy_revalidation_evidence,
@@ -107,12 +109,141 @@ def test_fragment_detail_metadata_extracts_deadline_and_terms():
     )
 
     assert position.deadline == date(2026, 8, 15)
-    assert position.deadline_raw.startswith(
-        "Application Deadline: 15 Aug 2026 - 00:00 (UTC)"
-    )
+    assert position.deadline_raw.startswith("Application Deadline: 15 Aug 2026 - 00:00 (UTC)")
     assert position.duration_raw == "Duration: 36 months"
     assert position.compensation_currency == "CHF"
     assert position.research_group == "Human-Centred Design Lab"
+
+
+def test_job_posting_jsonld_recovers_dates_and_native_salary():
+    metadata = _job_posting_metadata(
+        """
+        <script type="application/ld+json">
+        {"@context":"https://schema.org","@type":"JobPosting",
+         "datePosted":"July 9, 2026","validThrough":"4 September 2026",
+         "baseSalary":{"@type":"MonetaryAmount","currency":"GBP",
+           "value":{"@type":"QuantitativeValue","unitText":"£60,484 - £73,058 per annum"}}}
+        </script>
+        """
+    )
+
+    assert metadata == (
+        "Published on: July 9, 2026\nApplication deadline: 4 September 2026\nSalary: £60,484 - £73,058 per annum GBP"
+    )
+
+
+def test_job_posting_jsonld_keeps_amount_before_payment_period():
+    metadata = _job_posting_metadata(
+        """
+        <script type="application/ld+json">
+        {"@type":"JobPosting","baseSalary":{"currency":"USD","value":{
+          "minValue":50000,"maxValue":70000,"unitText":"YEAR"}}}
+        </script>
+        """
+    )
+
+    assert metadata == "Salary: 50000 - 70000 per year USD"
+
+
+def test_job_posting_jsonld_abstains_when_multiple_posts_are_not_attributable():
+    metadata = _job_posting_metadata(
+        """
+        <script type="application/ld+json">
+        [{"@type":"JobPosting","title":"First","validThrough":"2026-09-01"},
+         {"@type":"JobPosting","title":"Second","validThrough":"2026-10-01"}]
+        </script>
+        """,
+        expected_url="https://example.test/jobs/target",
+    )
+
+    assert metadata == ""
+
+
+def test_job_posting_jsonld_selects_the_post_matching_the_detail_url():
+    metadata = _job_posting_metadata(
+        """
+        <script type="application/ld+json">
+        [{"@type":"JobPosting","url":"/jobs/other","validThrough":"2026-09-01"},
+         {"@type":"JobPosting","url":"/jobs/target/","validThrough":"2026-10-01"}]
+        </script>
+        """,
+        expected_url="https://example.test/jobs/target",
+    )
+
+    assert metadata == "Application deadline: 2026-10-01"
+
+
+def test_malformed_job_posting_jsonld_recovers_only_explicit_scalar_facts():
+    metadata = _job_posting_metadata(
+        """
+        <script type="application/ld+json">
+        {"@type":"JobPosting","description":"first line
+        second line","datePosted":"July 9, 2026",
+        "validThrough":"4 September 2026",
+        "baseSalary":{"currency":"GBP","value":{
+          "unitText":"£60,484 - £73,058 per annum"}}}
+        </script>
+        """
+    )
+
+    assert metadata == (
+        "Published on: July 9, 2026\nApplication deadline: 4 September 2026\nSalary: £60,484 - £73,058 per annum GBP"
+    )
+
+
+def test_clean_detail_prefers_job_posting_description_over_page_chrome():
+    html = """
+    <html><header><img alt="University logo"><nav>Courses Research Jobs</nav></header>
+    <main><button>Apply now</button><h1>Interaction Designer</h1>
+    <script type="application/ld+json">{"@type":"JobPosting",
+      "description":"&lt;p&gt;Lead funded interaction-design research with our lab.&lt;/p&gt;&lt;p&gt;This is a full-time academic role open to applicants.&lt;/p&gt;"}
+    </script><footer>Privacy Cookie settings</footer></main></html>
+    """
+
+    result = _clean_detail_document(html, "WHOLE PAGE MARKDOWN")
+
+    assert "Lead funded interaction-design research with our lab." in result
+    assert "full-time academic role" in result
+    assert "University logo" not in result
+    assert "Courses Research Jobs" not in result
+    assert "Apply now" not in result
+    assert "WHOLE PAGE MARKDOWN" not in result
+
+
+def test_clean_detail_recovers_description_from_malformed_job_posting_jsonld():
+    html = """
+    <script type="application/ld+json">
+    {"@type":"JobPosting","description":"First paragraph about this funded role.
+    Second paragraph with application requirements and research context."}
+    </script>
+    """
+
+    result = _clean_detail_document(html, "fallback navigation markdown")
+
+    assert result == (
+        "First paragraph about this funded role.\n\n"
+        "Second paragraph with application requirements and research context."
+    )
+
+
+def test_clean_detail_falls_back_to_clean_main_content_without_structured_data():
+    html = """
+    <header>Logo <nav>Home Courses Jobs</nav></header>
+    <main><aside class="sidebar">Related links</aside>
+      <h1>Doctoral researcher</h1>
+      <p>Applications are invited for a funded doctoral researcher working on spatial computing.</p>
+      <p>The successful candidate will join the Human Interfaces laboratory for three years.</p>
+      <button>Share</button>
+    </main><footer>Privacy</footer>
+    """
+
+    result = _clean_detail_document(html, "fallback")
+
+    assert "funded doctoral researcher" in result
+    assert "Human Interfaces laboratory" in result
+    assert "Home Courses Jobs" not in result
+    assert "Related links" not in result
+    assert "Share" not in result
 
 
 def test_detail_metadata_preserves_an_existing_richer_deadline():
@@ -133,6 +264,56 @@ def test_detail_metadata_preserves_an_existing_richer_deadline():
 
     assert position.deadline == date(2026, 12, 31)
     assert position.deadline_raw == "existing detail deadline"
+
+
+def test_detail_metadata_replaces_noisy_raw_values_when_structured_dates_match():
+    position = SimpleNamespace(
+        compensation_raw=None,
+        compensation_min=None,
+        compensation_max=None,
+        compensation_currency=None,
+        compensation_period=None,
+        duration_raw=None,
+        published_raw="Published 9 July 2026 Navigation Menu Cookie settings",
+        published_at=date(2026, 7, 9),
+        deadline_raw="Apply by 4 September 2026 FAQs Start application Further actions",
+        deadline=date(2026, 9, 4),
+        research_group=None,
+    )
+
+    _apply_extracted_detail_metadata(
+        position,
+        "Published on: July 9, 2026\nApplication deadline: 4 September 2026\nA useful role description.",
+    )
+
+    assert position.published_raw == "Published on: July 9, 2026"
+    assert position.deadline_raw == "Application deadline: 4 September 2026"
+
+
+def test_detail_metadata_replaces_a_bare_salary_label_with_an_amount():
+    position = SimpleNamespace(
+        compensation_raw="Salary",
+        compensation_min=None,
+        compensation_max=None,
+        compensation_currency=None,
+        compensation_period=None,
+        duration_raw=None,
+        published_raw=None,
+        published_at=None,
+        deadline_raw=None,
+        deadline=None,
+        research_group=None,
+    )
+
+    _apply_extracted_detail_metadata(
+        position,
+        "Salary: £60,484 - £73,058 per annum GBP",
+    )
+
+    assert position.compensation_raw == "Salary: £60,484 - £73,058 per annum GBP"
+    assert position.compensation_min == 60484
+    assert position.compensation_max == 73058
+    assert position.compensation_currency == "GBP"
 
 
 @pytest.mark.asyncio
@@ -158,9 +339,7 @@ async def test_failed_crawl_download_result_switches_to_direct_fetch(monkeypatch
     )
 
     assert result == "PDF evidence text"
-    direct_fetch.assert_awaited_once_with(
-        "https://example.test/file/call?version=1"
-    )
+    direct_fetch.assert_awaited_once_with("https://example.test/file/call?version=1")
 
 
 def test_pdf_extractor_rejects_non_pdf_payloads_without_retryable_parser_noise():
@@ -299,9 +478,7 @@ def test_long_title_repeated_by_fragment_is_not_detail_evidence():
 
 
 def test_substantial_fragment_text_without_its_title_is_not_attributable():
-    unrelated_catalogue = (
-        "Applications are invited for several unrelated projects. " + "evidence " * 40
-    )
+    unrelated_catalogue = "Applications are invited for several unrelated projects. " + "evidence " * 40
 
     assert not _has_attributable_fragment_evidence(
         unrelated_catalogue,
@@ -349,12 +526,8 @@ def test_fragment_dom_extraction_tokenizes_aria_controls_and_abstains_on_many_pa
         f'<section id="panel-1">{body}</section><section id="panel-2">{body}</section>'
     )
 
-    assert _extract_fragment_document(
-        one_panel, fragment="panel-1", title="Call"
-    ) is not None
-    assert _extract_fragment_document(
-        many_panels, fragment="call-1", title="Call"
-    ) is None
+    assert _extract_fragment_document(one_panel, fragment="panel-1", title="Call") is not None
+    assert _extract_fragment_document(many_panels, fragment="call-1", title="Call") is None
 
 
 def test_synthetic_fragment_requires_one_unique_exact_title_container():
@@ -362,16 +535,22 @@ def test_synthetic_fragment_requires_one_unique_exact_title_container():
     html = f"<article><h2>Quantum project</h2><p>{body}</p></article>"
     duplicate = html + f"<article><h2>Quantum project</h2><p>{body}</p></article>"
 
-    assert _extract_fragment_document(
-        html,
-        fragment="position-deadbeefdeadbeef",
-        title="Quantum project",
-    ) is not None
-    assert _extract_fragment_document(
-        duplicate,
-        fragment="position-deadbeefdeadbeef",
-        title="Quantum project",
-    ) is None
+    assert (
+        _extract_fragment_document(
+            html,
+            fragment="position-deadbeefdeadbeef",
+            title="Quantum project",
+        )
+        is not None
+    )
+    assert (
+        _extract_fragment_document(
+            duplicate,
+            fragment="position-deadbeefdeadbeef",
+            title="Quantum project",
+        )
+        is None
+    )
 
 
 def test_fragment_extraction_never_returns_the_whole_page_for_an_unknown_target():
@@ -383,11 +562,14 @@ def test_fragment_extraction_never_returns_the_whole_page_for_an_unknown_target(
 def test_synthetic_fragment_never_promotes_an_unbounded_page_container():
     html = "<main><h2>Unique title</h2><p>" + ("unrelated page text " * 80) + "</p></main>"
 
-    assert _extract_fragment_document(
-        html,
-        fragment="position-deadbeefdeadbeef",
-        title="Unique title",
-    ) is None
+    assert (
+        _extract_fragment_document(
+            html,
+            fragment="position-deadbeefdeadbeef",
+            title="Unique title",
+        )
+        is None
+    )
 
 
 def test_synthetic_fragment_never_promotes_a_whole_bounded_listing():
@@ -401,8 +583,11 @@ def test_synthetic_fragment_never_promotes_a_whole_bounded_listing():
         + "</div>"
     )
 
-    assert _extract_fragment_document(
-        html,
-        fragment="position-deadbeefdeadbeef",
-        title="Target vacancy",
-    ) is None
+    assert (
+        _extract_fragment_document(
+            html,
+            fragment="position-deadbeefdeadbeef",
+            title="Target vacancy",
+        )
+        is None
+    )

@@ -226,3 +226,17 @@ def test_extract_terms_from_full_detail_text():
     assert duration == "Duration: 36 months"
     assert published == "Posted on: 10 July 2026"
     assert extract_research_group("Research group: Human-Centred Design Lab") == "Human-Centred Design Lab"
+
+
+def test_extract_terms_recovers_a_permanent_contract_across_markdown_lines():
+    _, duration, _ = extract_terms("Contract\n\nPermanent\n\nHours\n\n37")
+
+    assert duration == "Contract: Permanent"
+
+
+def test_extract_terms_joins_a_salary_label_to_its_markdown_value():
+    compensation, _, _ = extract_terms(
+        "Salary\n\n£60,484 - £73,058 per annum\nContract\nPermanent"
+    )
+
+    assert compensation == "Salary: £60,484 - £73,058 per annum"

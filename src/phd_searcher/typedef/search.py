@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 from phd_searcher.countries import country_code
+from phd_searcher.engine.search_query import split_combined_query
 from phd_searcher.opportunity_kinds import DEFAULT_OPPORTUNITY_KIND, OpportunityKind
 from phd_searcher.position_types import POSITION_TYPES
 
@@ -20,7 +21,7 @@ SourceFamilySignal = Literal["supports_opportunity", "supports_non_opportunity"]
 
 
 class SearchBody(BaseModel):
-    query: str
+    query: str = Field(min_length=1, max_length=500)
     mode: SearchMode = "verified_only"
     # Heuristic audit score, not a calibrated probability. ``None`` keeps all
     # results allowed by ``mode``; 0 is equivalent to fully verified only.
@@ -46,6 +47,13 @@ class SearchBody(BaseModel):
     ] = "relevance"
     sort_order: Literal["asc", "desc"] = "desc"
     limit: int | None = Field(default=None, ge=1)
+
+    @field_validator("query")
+    @classmethod
+    def validate_query(cls, value: str) -> str:
+        value = value.strip()
+        split_combined_query(value)
+        return value
 
     @field_validator("country", mode="before")
     @classmethod

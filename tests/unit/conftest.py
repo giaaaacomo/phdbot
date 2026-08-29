@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 
 import pytest
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from injector import Injector, Module, provider, singleton
 from qdrant_client import AsyncQdrantClient
 
@@ -72,6 +72,10 @@ def container(fake_model: FakeModelHelper, qdrant: AsyncQdrantClient) -> Injecto
 
 
 @pytest.fixture
-def client(container: Injector) -> Iterator[TestClient]:
-    with TestClient(create_app(container, title="test", version="0.0.0")) as c:
+async def client(container: Injector) -> AsyncIterator[AsyncClient]:
+    app = create_app(container, title="test", version="0.0.0")
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as c:
         yield c

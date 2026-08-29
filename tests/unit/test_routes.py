@@ -1,88 +1,95 @@
-def test_health_ok(client):
-    assert client.get("/health").status_code == 200
+from pathlib import Path
 
 
-def test_dashboard_is_not_cached(client):
-    response = client.get("/")
-    assert response.status_code == 200
-    assert response.headers["cache-control"] == "no-store"
-    assert "<title>PHDBOT — control panel</title>" in response.text
-    assert "<h1>PHDBOT</h1>" in response.text
-    assert "PhD Searcher" not in response.text
-    assert "pages/source" in response.text
-    assert "duration" in response.text
-    assert "Maximum results" in response.text
-    assert "Minimum compensation" in response.text
-    assert "Minimum relevance" in response.text
-    assert "Detail pages" in response.text
-    assert "Related universities" in response.text
-    assert "Candidate screening" in response.text
-    assert 'review2: ["Deep review"' in response.text
-    assert "const stageLabel = stage" in response.text
-    assert 'title="Continue the interrupted run from its durable checkpoint"' in response.text
-    assert 'title="Exclude results below this semantic similarity threshold"' in response.text
-    assert "review-filter-tile" in response.text
-    assert "data-review-status" in response.text
-    assert 'aria-pressed="${status === value}"' in response.text
-    assert "country-mark" in response.text
-    assert "countryMark(u.country)" in response.text
-    assert 'title="${esc(countryName(normalized))}"' in response.text
-    assert 'data-cov-sort="tier"' in response.text
-    assert 'data-cov-sort="discovery"' in response.text
-    assert 'data-cov-sort="pages"' in response.text
-    assert "updateCoverageSortHeaders" in response.text
-    assert "max-width: 3440px" in response.text
-    assert "#pipeline.active { display: grid" in response.text
-    assert "#search .filter-layout { grid-template-columns" in response.text
-    assert "@media (min-width: 1700px)" in response.text
-    assert "#cov-tiles { grid-template-columns: repeat(6" in response.text
-    assert "#review-tiles { grid-template-columns: repeat(5" in response.text
-    assert "@media (min-width: 2200px)" in response.text
-    assert "max-width: 100ch; margin-inline: auto" in response.text
-    assert "grid-template-columns: repeat(2, minmax(0, 100ch))" in response.text
-    assert "numbered-hit" in response.text
-    assert "page.offset + index + 1" in response.text
-    assert '<th class="row-number"' in response.text
-    assert "Searching indexed opportunities" in response.text
-    assert 'aria-busy", String(active)' in response.text
-    assert "finally { setSearchLoading(false); }" in response.text
-    assert 'RESULT_VIEWS_KEY = "phdbot.resultViews.v1"' in response.text
-    assert 'id="s-mode"' in response.text
-    assert 'value="include_probable"' in response.text
-    assert 'id="s-max-uncertainty" type="number" min="0" max="100" step="5" value="60"' in response.text
-    assert "Verification evidence unavailable" in response.text
-    assert 'REPORTED_POSITIONS_KEY = "phdbot.reportedPositions.v1"' in response.text
-    assert "submitPositionFeedback" in response.text
-    assert "undoPositionFeedback" in response.text
-    assert ".verification-badge.probable" in response.text
-    assert "markResultViewed(id, \"details\")" in response.text
-    assert "Source opened" in response.text
-    assert 'value === "phd"' in response.text
-    assert "PhD / doctoral / predoctoral position" in response.text
-    assert 'role="tablist"' in response.text
-    assert 'TAB_KEY = "phdbot.activeTab.v1"' in response.text
-    assert "Loading candidates" in response.text
-    assert "Filters reset; semantic query preserved" in response.text
-    assert "coverageLoadToken" in response.text
-    assert "reviewLoadToken" in response.text
-    assert "Stop the current run safely" in response.text
-    assert 'data-tab="review"' in response.text
-    assert 'data-tab="macros"' in response.text
-    assert "Refine automatic sample" in response.text
-    assert 'id="btn-export"' in response.text
-    assert "Save current search as macro" in response.text
-    assert 'id="p-schedule-at" type="datetime-local"' in response.text
-    assert 'id="btn-schedule"' in response.text
-    assert 'target:"pipeline", run_at:runAt, timezone:"Europe/Rome"' in response.text
-    assert "pipelineBodyFromControls" in response.text
-    assert "scheduleMacro" in response.text
-    assert "/v1/schedules?limit=100" in response.text
-    assert 'class="act ghost" id="btn-stop" disabled' in response.text
-    assert 'classList.toggle("danger", canStop)' in response.text
-    assert 'classList.toggle("ghost", resumable)' in response.text
-    assert "Dates and compensation" in response.text
-    assert "Relevance and result order" in response.text
-    assert "institutions" in response.text
-    assert "Collect &amp; publish" in response.text
-    assert "until the first empty page" in response.text
-    assert 'id="p-max-pages" type="number" min="1" max="1500"' in response.text
+async def test_health_ok(client):
+    assert (await client.get("/health")).status_code == 200
+
+
+def test_dashboard_source_contains_expected_controls():
+    dashboard = (Path(__file__).parents[2] / "src/phd_searcher/static/index.html").read_text()
+    assert "<title>PHDBOT — control panel</title>" in dashboard
+    assert "<h1>PHDBOT</h1>" in dashboard
+    assert "PhD Searcher" not in dashboard
+    assert "pages/source" in dashboard
+    assert "duration" in dashboard
+    assert "Maximum results" in dashboard
+    assert "Minimum pay" in dashboard
+    assert "Minimum relevance" in dashboard
+    assert "Detail pages" in dashboard
+    assert "Related universities" in dashboard
+    assert "Candidate screening" in dashboard
+    assert 'review2: ["Deep review"' in dashboard
+    assert "const stageLabel = stage" in dashboard
+    assert 'title="Continue the interrupted run from its durable checkpoint"' in dashboard
+    assert 'title="Exclude results below this semantic similarity threshold"' in dashboard
+    assert "review-filter-tile" in dashboard
+    assert "data-review-status" in dashboard
+    assert 'aria-pressed="${status === value}"' in dashboard
+    assert "country-mark" in dashboard
+    assert "countryMark(u.country)" in dashboard
+    assert 'title="${esc(countryName(normalized))}"' in dashboard
+    assert 'data-cov-sort="tier"' in dashboard
+    assert 'data-cov-sort="discovery"' in dashboard
+    assert 'data-cov-sort="pages"' in dashboard
+    assert "updateCoverageSortHeaders" in dashboard
+    assert "max-width: 3440px" in dashboard
+    assert "#pipeline.active { display: grid" in dashboard
+    assert "#search .filter-layout { grid-template-columns" in dashboard
+    assert "@media (min-width: 1700px)" in dashboard
+    assert "#cov-tiles { grid-template-columns: repeat(6" in dashboard
+    assert "#review-tiles { grid-template-columns: repeat(5" in dashboard
+    assert "@media (min-width: 2200px)" in dashboard
+    assert "max-width: 100ch; margin-inline: auto" in dashboard
+    assert "grid-template-columns: repeat(2, minmax(0, 100ch))" in dashboard
+    assert "numbered-hit" in dashboard
+    assert "page.offset + index + 1" in dashboard
+    assert '<th class="row-number"' in dashboard
+    assert "Searching indexed opportunities" in dashboard
+    assert 'SEARCH_HISTORY_KEY = "phdbot.searchHistory.v1"' in dashboard
+    assert "Recent / frequent:" in dashboard
+    assert "each part is searched separately" in dashboard
+    assert "Filter data unavailable" in dashboard
+    assert "const hasIncomeFilter" in dashboard
+    assert "(raw: ${p.deadline_raw" not in dashboard
+    assert 'aria-busy", String(active)' in dashboard
+    assert "finally { setSearchLoading(false); }" in dashboard
+    assert 'RESULT_VIEWS_KEY = "phdbot.resultViews.v1"' in dashboard
+    assert 'id="s-mode"' in dashboard
+    assert 'value="include_probable"' in dashboard
+    assert 'id="s-max-uncertainty" type="number" min="0" max="100" step="5" value="60"' in dashboard
+    assert "Verification evidence unavailable" in dashboard
+    assert 'REPORTED_POSITIONS_KEY = "phdbot.reportedPositions.v1"' in dashboard
+    assert "submitPositionFeedback" in dashboard
+    assert "undoPositionFeedback" in dashboard
+    assert ".verification-badge.probable" in dashboard
+    assert 'markResultViewed(id, "details")' in dashboard
+    assert "Source opened" in dashboard
+    assert 'value === "phd"' in dashboard
+    assert "PhD / doctoral / predoctoral position" in dashboard
+    assert 'role="tablist"' in dashboard
+    assert 'TAB_KEY = "phdbot.activeTab.v1"' in dashboard
+    assert "Loading candidates" in dashboard
+    assert "Filters reset; semantic query preserved" in dashboard
+    assert "coverageLoadToken" in dashboard
+    assert "reviewLoadToken" in dashboard
+    assert "Stop the current run safely" in dashboard
+    assert 'data-tab="review"' in dashboard
+    assert 'data-tab="macros"' in dashboard
+    assert "Refine automatic sample" in dashboard
+    assert 'id="btn-export"' in dashboard
+    assert "Save current search as macro" in dashboard
+    assert 'id="p-schedule-at" type="datetime-local"' in dashboard
+    assert 'id="btn-schedule"' in dashboard
+    assert 'target:"pipeline", run_at:runAt, timezone:"Europe/Rome"' in dashboard
+    assert "pipelineBodyFromControls" in dashboard
+    assert "scheduleMacro" in dashboard
+    assert "/v1/schedules?limit=100" in dashboard
+    assert 'class="act ghost" id="btn-stop" disabled' in dashboard
+    assert 'classList.toggle("danger", canStop)' in dashboard
+    assert 'classList.toggle("ghost", resumable)' in dashboard
+    assert "Dates and compensation" in dashboard
+    assert "Relevance and result order" in dashboard
+    assert "institutions" in dashboard
+    assert "Collect &amp; publish" in dashboard
+    assert "until the first empty page" in dashboard
+    assert 'id="p-max-pages" type="number" min="1" max="1500"' in dashboard

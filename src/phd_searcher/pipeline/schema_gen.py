@@ -23,7 +23,10 @@ from phd_searcher.database.models.listing_page import ListingPage
 from phd_searcher.database.models.university import University
 from phd_searcher.pipeline.progress import Progress
 from phd_searcher.pipeline.retry import retry_async
-from phd_searcher.pipeline.schema_quality import schema_quality_issues
+from phd_searcher.pipeline.schema_quality import (
+    repair_base_anchor_url_schema,
+    schema_quality_issues,
+)
 from phd_searcher.pipeline.urls import is_listing_page_url
 
 _QUERY_UNIVERSITY = (
@@ -117,7 +120,7 @@ def _validated_reusable_schema(
 ) -> dict[str, object] | None:
     """Return the first cached schema that passes the normal target-page gate."""
     for raw_schema in schemas:
-        schema = deepcopy(raw_schema)
+        schema = repair_base_anchor_url_schema(raw_schema)
         if schema_quality_issues(schema):
             continue
         try:
@@ -259,7 +262,7 @@ async def _generate_schema_with_tools(
         call = calls[0]
         messages.append(message)
         try:
-            schema = _tool_arguments(call)
+            schema = repair_base_anchor_url_schema(_tool_arguments(call))
             # Il titolo è indispensabile. Il link non lo è: diverse università
             # pubblicano le vacancy per esteso nella listing senza detail page.
             validation = JsonCssExtractionStrategy._validate_schema(

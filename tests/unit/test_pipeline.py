@@ -16,7 +16,6 @@ from typing import Any, cast
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 from injector import Injector, singleton
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -769,16 +768,23 @@ def test_stop_on_finished_run_is_rejected() -> None:
 # --- routes ---
 
 
-def test_pipeline_routes(container: Injector) -> None:
+async def test_pipeline_routes(container: Injector) -> None:
     runner = FakeRunner()
     container.binder.bind(PipelineRunner, to=runner, scope=singleton)
-    with TestClient(create_app(container, title="test", version="0.0.0")) as client:
-        assert client.get("/v1/pipeline/status").json()["state"] == "idle"
-        assert client.post("/v1/pipeline/stop").status_code == 409
-        assert client.post("/v1/pipeline/resume").status_code == 409
+    app = create_app(container, title="test", version="0.0.0")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        assert (await client.get("/v1/pipeline/status")).json()["state"] == "idle"
+        assert (await client.post("/v1/pipeline/stop")).status_code == 409
+        assert (await client.post("/v1/pipeline/resume")).status_code == 409
         assert (
-            client.post("/v1/pipeline/start", json={"stages": ["not-a-stage"]}).status_code == 422
-        )  # Literal valida i nomi stadio
+            await client.post(
+                "/v1/pipeline/start",
+                json={"stages": ["not-a-stage"]},
+            )
+        ).status_code == 422
         assert (
-            client.post("/v1/pipeline/start", json={"stages": []}).status_code == 422
-        )  # lista vuota rifiutata (run no-op seppellirebbe l'ultima riprendibile)
+            await client.post("/v1/pipeline/start", json={"stages": []})
+        ).status_code == 422

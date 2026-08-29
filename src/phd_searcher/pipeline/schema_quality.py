@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from copy import deepcopy
 
 SCHEMA_WILDCARD_BASE = "schema_wildcard_base"
 SCHEMA_NAVIGATION_BASE = "schema_navigation_base"
@@ -24,6 +25,50 @@ _OPPORTUNITY_TOKEN_RE = re.compile(
     r"(?:job|vacanc|position|opening|opportunit|career|doctoral|phd|postdoc|stellen)",
     re.IGNORECASE,
 )
+_CSS_COMBINATOR_RE = re.compile(r"\s*(?:[>+~]|\s)\s*")
+
+
+def _base_selector_targets_anchors(value: object) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    selectors = [part.strip() for part in value.split(",") if part.strip()]
+    if not selectors:
+        return False
+    for selector in selectors:
+        compounds = [part for part in _CSS_COMBINATOR_RE.split(selector) if part]
+        if not compounds or re.match(r"^a(?:$|[#.:\[].*)", compounds[-1], re.I) is None:
+            return False
+    return True
+
+
+def repair_base_anchor_url_schema(
+    schema: Mapping[str, object],
+) -> dict[str, object]:
+    """Recover an anchor base element's own href without asking the LLM again.
+
+    Crawl4AI field selectors search descendants only, so an ``a.card`` base
+    cannot extract its own href through a normal field. ``baseFields`` is the
+    exact schema primitive for attributes on the repeated element itself.
+    """
+    repaired = deepcopy(dict(schema))
+    raw_fields = repaired.get("fields")
+    raw_base_fields = repaired.get("baseFields", [])
+    if not isinstance(raw_fields, list) or not isinstance(raw_base_fields, list):
+        return repaired
+    existing_names = {
+        str(field.get("name", "")).casefold()
+        for field in (*raw_fields, *raw_base_fields)
+        if isinstance(field, Mapping)
+    }
+    if "url" in existing_names or not _base_selector_targets_anchors(
+        repaired.get("baseSelector")
+    ):
+        return repaired
+    repaired["baseFields"] = [
+        *raw_base_fields,
+        {"name": "url", "type": "attribute", "attribute": "href"},
+    ]
+    return repaired
 
 
 def _unsafe_navigation_selector(value: object) -> bool:

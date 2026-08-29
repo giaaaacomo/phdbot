@@ -20,9 +20,14 @@ from phd_searcher.countries import country_code
 from phd_searcher.database.models.listing_page import ListingPage
 from phd_searcher.database.models.position import Position
 from phd_searcher.database.models.university import University
-from phd_searcher.pipeline.normalize import NormalizedPosition, normalize_item
+from phd_searcher.pipeline.normalize import (
+    NormalizedPosition,
+    normalize_item,
+    synthetic_position_url,
+)
 from phd_searcher.pipeline.progress import Progress
 from phd_searcher.pipeline.retry import clear_retry, retry_async
+from phd_searcher.pipeline.schema_quality import repair_base_anchor_url_schema
 from phd_searcher.pipeline.urls import is_listing_page_url
 
 _SAFETY_MAX_PAGES = 1500
@@ -191,6 +196,11 @@ async def _upsert_items(
     raw_items: list[dict[str, object]],
 ) -> int:
     normalized = [(n, item) for item in raw_items if (n := normalize_item(item, base_url=page.url)) is not None]
+    await _upgrade_synthetic_position_urls(
+        session,
+        page,
+        [position for position, _ in normalized],
+    )
     observed_at = datetime.now(UTC).replace(tzinfo=None)
     for n, item in normalized:
         values = _position_values(n, page, observed_at=observed_at)
@@ -293,6 +303,82 @@ async def _upsert_items(
         )
         await session.execute(upsert)
     return len(normalized)
+
+
+async def _upgrade_synthetic_position_urls(
+    session: AsyncSession,
+    page: ListingPage,
+    positions: list[NormalizedPosition],
+) -> int:
+    """Preserve identity when a repaired schema starts exposing real links."""
+    candidates: dict[str, set[str]] = {}
+    for position in positions:
+        synthetic = synthetic_position_url(position.title, page.url)[:2048]
+        direct = position.url[:2048]
+        if direct != synthetic:
+            candidates.setdefault(synthetic, set()).add(direct)
+    unambiguous = {
+        synthetic: next(iter(directs))
+        for synthetic, directs in candidates.items()
+        if len(directs) == 1
+    }
+    if not unambiguous:
+        return 0
+    lookup_urls = set(unambiguous) | set(unambiguous.values())
+    existing = (
+        await session.execute(
+            select(Position.id, Position.url).where(Position.url.in_(lookup_urls))
+        )
+    ).all()
+    ids_by_url = {url: position_id for position_id, url in existing}
+    upgraded = 0
+    for synthetic, direct in unambiguous.items():
+        position_id = ids_by_url.get(synthetic)
+        if position_id is None:
+            continue
+        if direct in ids_by_url:
+            # Preserve both audit records, but prevent the obsolete synthetic
+            # identity from remaining as a duplicate search result.
+            await session.execute(
+                update(Position)
+                .where(Position.id == position_id, Position.url == synthetic)
+                .values(is_active=False, indexed_at=None)
+            )
+            upgraded += 1
+            continue
+        await session.execute(
+            update(Position)
+            .where(Position.id == position_id, Position.url == synthetic)
+            .values(
+                url=direct,
+                full_description=None,
+                details_scraped_at=None,
+                screening_status=case(
+                    (Position.screening_manual.is_(False), "pending"),
+                    else_=Position.screening_status,
+                ),
+                screening_reason=case(
+                    (Position.screening_manual.is_(False), None),
+                    else_=Position.screening_reason,
+                ),
+                screening_source=case(
+                    (Position.screening_manual.is_(False), "rules"),
+                    else_=Position.screening_source,
+                ),
+                review_state=case(
+                    (Position.screening_manual.is_(False), "untriaged"),
+                    else_=Position.review_state,
+                ),
+                routing_reason=case(
+                    (Position.screening_manual.is_(False), None),
+                    else_=Position.routing_reason,
+                ),
+                indexed_at=None,
+            )
+        )
+        ids_by_url[direct] = position_id
+        upgraded += 1
+    return upgraded
 
 
 def _page_budget(page: ListingPage, max_pages: int | None) -> tuple[int, bool]:
@@ -398,7 +484,12 @@ async def run(
                 await progress.tick(uni.name if uni else page.url)
                 if progress.should_stop:
                     break
-                strategy = JsonCssExtractionStrategy(dict(page.extraction_schema or {}))
+                schema = repair_base_anchor_url_schema(
+                    dict(page.extraction_schema or {})
+                )
+                if schema != page.extraction_schema:
+                    page.extraction_schema = schema
+                strategy = JsonCssExtractionStrategy(schema)
                 config = CrawlerRunConfig(
                     cache_mode=CacheMode.BYPASS,
                     check_robots_txt=True,

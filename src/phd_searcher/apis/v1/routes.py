@@ -36,7 +36,7 @@ router = APIRouter(prefix="/v1")
 
 
 def _service[T](cls: type[T]) -> DependsParam:
-    def resolve(request: Request) -> T:
+    async def resolve(request: Request) -> T:
         return cast(T, request.app.state.container.get(cls))  # app.state non è tipizzato
 
     return DependsParam(resolve)

@@ -143,6 +143,8 @@
   .hit-title { padding-right: 64px; }
   .hit-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 7px; margin-top: 5px; }
   .hit-number, .row-number { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .result-group-label { margin: 16px 0 3px; padding: 8px 10px; border-top: 1px solid var(--border);
+    color: var(--muted); font-size: 12px; font-weight: 600; }
   .hit .meta { color: var(--muted); font-size: 12px; }
   .score { float: right; color: var(--muted); font-variant-numeric: tabular-nums; }
   .detail { margin: 8px 0 0 36px; padding: 12px; background: var(--bg); border: 1px solid var(--border);
@@ -157,6 +159,12 @@
   .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
   .filter-grid label { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
   .filter-grid .wide { grid-column: span 2; }
+  .query-history { display: flex; flex-wrap: nowrap; align-items: center; gap: 7px; margin-top: 9px;
+    min-width: 0; overflow: hidden; white-space: nowrap; }
+  .query-history[hidden] { display: none; }
+  .query-history-label { flex: 0 0 auto; color: var(--muted); font-size: 12px; }
+  button.query-pill { flex: 0 0 auto; max-width: min(34ch, 55vw); padding: 4px 10px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
   details.multi-select { position: relative; }
   details.multi-select > summary { list-style: none; cursor: pointer; background: var(--bg); color: var(--text);
     border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -369,11 +377,13 @@
     <div class="card">
       <h2>Semantic search</h2>
       <div class="controls">
-        <input id="s-query" type="text" title="Describe the subject or opportunity you are looking for in natural language" placeholder="e.g. machine learning for climate" style="flex:1;min-width:240px">
+        <input id="s-query" type="text" aria-describedby="s-query-help" title="Describe the subject or opportunity you are looking for. Use + to combine up to 8 searches as an OR union." placeholder="e.g. VR + XR + interaction design" style="flex:1;min-width:240px">
         <button class="act" id="btn-search" title="Rank indexed opportunities by semantic relevance, then apply the filters below">Search</button>
         <select id="s-export-format" title="Portable format used to share the current result set"><option value="html">HTML</option><option value="pdf">PDF</option><option value="csv">CSV</option><option value="json">JSON</option></select>
         <button class="act ghost" id="btn-export" disabled title="Export the current search results and active filters">Export</button>
       </div>
+      <div id="s-query-history" class="query-history" aria-label="Recent and frequent searches" hidden></div>
+      <div id="s-query-help" class="muted" style="font-size:12px;margin-top:7px">Use <code>+</code> to combine searches: each part is searched separately and the best score for every result is kept. Write <code>\+</code> when the plus is part of a term.</div>
       <div class="filter-layout">
         <div class="filter-section">
           <h3>Where and what</h3>
@@ -396,7 +406,7 @@
             <label>Deadline to <input id="s-deadline-to" type="date"></label>
             <label>Published from <input id="s-posted-from" type="date"></label>
             <label>Published to <input id="s-posted-to" type="date"></label>
-            <label title="Minimum compensation in EUR equivalent">Minimum pay (€ equiv.) <input id="s-comp-min" type="number" min="0" step="any" placeholder="any"></label>
+            <label title="Minimum compensation in EUR equivalent. Unknown pay is retained in a separate group.">Minimum pay (€ equiv.) <input id="s-comp-min" type="number" min="0" step="any" placeholder="any"></label>
           </div>
         </div>
         <div class="filter-section">
@@ -415,7 +425,7 @@
       <div class="controls" style="margin-top:10px">
         <button class="act ghost" id="btn-search-reset" title="Clear all structured filters while keeping the semantic query">Reset filters</button>
       </div>
-      <p class="muted" style="margin:10px 0 0">The 60% default includes useful title-grounded leads. Set 85% (or leave empty) to inspect legacy positives whose final verification evidence is unavailable. Uncertainty is a transparent heuristic tier, not a calibrated probability. Publication date, duration and compensation appear when exposed by the source.</p>
+      <p class="muted" style="margin:10px 0 0">The 60% default includes useful title-grounded leads. Set 85% (or leave empty) to inspect legacy positives whose final verification evidence is unavailable. Uncertainty is a transparent heuristic tier, not a calibrated probability. Date and pay filters exclude known non-matches but retain missing values; only unknown pay is grouped at the end when a minimum pay is set.</p>
       <div id="s-msg" class="err-msg" role="status" aria-live="polite" style="margin-top:10px"></div>
     </div>
     <div class="card" id="s-institutions-card" style="display:none">
@@ -565,7 +575,7 @@ function activateTab(name, {focus = false, remember = true} = {}) {
   if (focus) selected.focus();
   if (selected.dataset.tab === "coverage") loadCoverage();
   if (selected.dataset.tab === "review") loadReview(false);
-  if (selected.dataset.tab === "search") loadSearchFacets();
+  if (selected.dataset.tab === "search") { loadSearchFacets(); renderSearchHistory(); }
   if (selected.dataset.tab === "macros") loadMacros();
 }
 tabButtons.forEach((button, index) => {
@@ -1017,6 +1027,92 @@ const opportunityKindLabel = value => ({
 })[value] || "unclassified";
 let lastSearchBody = null;
 let lastSearchResult = null;
+const SEARCH_HISTORY_KEY = "phdbot.searchHistory.v1";
+const SEARCH_HISTORY_LIMIT = 30;
+let searchHistory = (() => {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SEARCH_HISTORY_KEY) || "[]");
+    return Array.isArray(stored) ? stored.filter(item =>
+      item && typeof item.query === "string" && Number.isFinite(item.count) && typeof item.lastUsed === "string"
+    ).slice(0, SEARCH_HISTORY_LIMIT) : [];
+  } catch { return []; }
+})();
+function orderedSearchHistory() {
+  const recent = [...searchHistory].sort((a, b) => b.lastUsed.localeCompare(a.lastUsed));
+  const frequent = searchHistory.filter(item => item.count > 1)
+    .sort((a, b) => b.count - a.count || b.lastUsed.localeCompare(a.lastUsed));
+  const ordered = [];
+  const seen = new Set();
+  const add = item => {
+    const key = item.query.toLocaleLowerCase();
+    if (!seen.has(key)) { seen.add(key); ordered.push(item); }
+  };
+  for (let i = 0; i < Math.max(recent.length, frequent.length); i++) {
+    if (recent[i]) add(recent[i]);
+    if (frequent[i]) add(frequent[i]);
+  }
+  return ordered;
+}
+function fitSearchHistoryPills() {
+  const container = $("#s-query-history");
+  if (!container || container.clientWidth === 0) return;
+  const pills = () => [...container.querySelectorAll("button.query-pill")];
+  while (container.scrollWidth > container.clientWidth && pills().length > 1) pills().at(-1).remove();
+}
+function renderSearchHistory() {
+  const container = $("#s-query-history");
+  if (!container) return;
+  const entries = orderedSearchHistory();
+  container.replaceChildren();
+  container.hidden = entries.length === 0;
+  if (!entries.length) return;
+  const label = document.createElement("span");
+  label.className = "query-history-label";
+  label.textContent = "Recent / frequent:";
+  container.append(label);
+  const clear = document.createElement("button");
+  clear.type = "button";
+  clear.className = "act ghost query-history-clear";
+  clear.textContent = "Clear";
+  clear.title = "Remove locally saved search history";
+  clear.onclick = () => {
+    searchHistory = [];
+    try { localStorage.removeItem(SEARCH_HISTORY_KEY); } catch {}
+    renderSearchHistory();
+  };
+  container.append(clear);
+  entries.forEach(entry => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "act ghost query-pill";
+    button.textContent = entry.query;
+    button.title = `${entry.count} search${entry.count === 1 ? "" : "es"} · last used ${new Date(entry.lastUsed).toLocaleString()}`;
+    button.onclick = () => { $("#s-query").value = entry.query; doSearch(); };
+    container.append(button);
+  });
+  requestAnimationFrame(fitSearchHistoryPills);
+}
+function rememberSearch(query) {
+  const normalized = query.trim().replace(/\s+/g, " ")
+    .replace(/\s*(?<![+\\])\+(?!\+)\s*/g, " + ");
+  const key = normalized.toLocaleLowerCase();
+  const previous = searchHistory.find(item => item.query.toLocaleLowerCase() === key);
+  if (previous) {
+    previous.query = normalized;
+    previous.count += 1;
+    previous.lastUsed = new Date().toISOString();
+  } else {
+    searchHistory.push({query:normalized, count:1, lastUsed:new Date().toISOString()});
+  }
+  searchHistory = searchHistory.sort((a, b) => b.lastUsed.localeCompare(a.lastUsed)).slice(0, SEARCH_HISTORY_LIMIT);
+  try { localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(searchHistory)); } catch {}
+  renderSearchHistory();
+}
+let searchHistoryResizeFrame = null;
+window.addEventListener("resize", () => {
+  if (searchHistoryResizeFrame) cancelAnimationFrame(searchHistoryResizeFrame);
+  searchHistoryResizeFrame = requestAnimationFrame(renderSearchHistory);
+});
 const REPORTED_POSITIONS_KEY = "phdbot.reportedPositions.v1";
 let reportedPositions = (() => {
   try {
@@ -1192,7 +1288,13 @@ function renderSearchResult(result) {
   const visibleHits = showReported ? hits : hits.filter(hit => !reportedPosition(hit.position_id));
   $("#s-results-card").style.display = "block";
   $("#s-results-card h2").textContent = `Results — ${visibleHits.length}${visibleHits.length !== total ? ` of ${total}` : ""}${!showReported && hiddenCount ? ` · ${hiddenCount} reported hidden` : ""}`;
-  $("#s-results").innerHTML = visibleHits.length ? visibleHits.map((h, i) => `<div class="hit numbered-hit search-result${resultViewClass(h.position_id)}" data-position-id="${h.position_id}">
+  let unknownFilterGroupShown = false;
+  const hasIncomeFilter = lastSearchBody?.compensation_min != null;
+  const hasUnknownIncome = h => hasIncomeFilter && h.compensation_eur_max == null;
+  $("#s-results").innerHTML = visibleHits.length ? visibleHits.map((h, i) => {
+    const unknownGroup = hasUnknownIncome(h) && !unknownFilterGroupShown;
+    if (unknownGroup) unknownFilterGroupShown = true;
+    return `${unknownGroup ? `<div class="result-group-label">Filter data unavailable — retained for manual inspection</div>` : ""}<div class="hit numbered-hit search-result${resultViewClass(h.position_id)}" data-position-id="${h.position_id}">
     <span class="hit-number">${i + 1}.</span>
     <div class="hit-content">
       <div><span class="score">${h.score.toFixed(3)}</span>
@@ -1207,7 +1309,8 @@ function renderSearchResult(result) {
       <div class="detail" id="det-${h.position_id}" style="display:none"></div>
       ${reportControls(h)}
     </div>
-  </div>`).join("")
+  </div>`;
+  }).join("")
     : `<p class="muted">${hiddenCount && !showReported ? "Every returned item has been reported and is hidden in this browser. Enable ‘show reported items’ to inspect or undo them." : "No active positions exceed the relevance threshold. Related institutions may still appear above; lower the threshold only if you want a broader search."}</p>`;
 }
 async function submitPositionFeedback(id, forcedReason = null) {
@@ -1268,6 +1371,7 @@ async function doSearch() {
     const result = await api("/v1/search", {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(body)});
     $("#s-msg").textContent = "";
     lastSearchBody = body;
+    rememberSearch(q);
     $("#btn-export").disabled = false;
     $("#btn-macro-save").disabled = false;
     renderSearchResult(result);
@@ -1304,7 +1408,7 @@ async function showDetail(id) {
     const { found, position: p } = await api("/v1/positions/" + id);
     if (found) markResultViewed(id, "details");
     el.textContent = found
-      ? `${p.title}\n\nType: ${positionTypeLabel(p.position_type)}\nOpportunity: ${opportunityKindLabel(p.opportunity_kind)}\nUniversity: ${p.university || "—"}\nCountry: ${flag(p.country)} ${p.country || "—"}\nPublished: ${p.published_at || "—"} (raw: ${p.published_raw || "—"})\nFirst pulled by PHDBOT: ${fmtDate(p.first_seen_at)}\nLast checked by PHDBOT: ${fmtDate(p.last_seen_at || p.scraped_at)}\nDeadline: ${p.deadline || "—"} (raw: ${p.deadline_raw || "—"})\nDuration: ${p.duration || "—"}\nCompensation: ${p.compensation || "—"}\n\n${p.description || "No additional description was extracted."}`
+      ? `${p.title}\n\nType: ${positionTypeLabel(p.position_type)}\nOpportunity: ${opportunityKindLabel(p.opportunity_kind)}\nUniversity: ${p.university || "—"}\nCountry: ${flag(p.country)} ${p.country || "—"}\nPublished: ${p.published_at || "—"}\nFirst pulled by PHDBOT: ${fmtDate(p.first_seen_at)}\nLast checked by PHDBOT: ${fmtDate(p.last_seen_at || p.scraped_at)}\nDeadline: ${p.deadline || "—"}\nDuration: ${p.duration || "—"}\nCompensation: ${p.compensation || "—"}\n\n${p.description || "No additional description was extracted."}`
       : "not found";
   } catch (e) { el.textContent = e.message; }
 }

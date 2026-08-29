@@ -1,9 +1,15 @@
 from datetime import date
+from unittest.mock import AsyncMock
 
 import pytest
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
-from phd_searcher.service.search_service import SearchService, normalize_retrieval_query
+from phd_searcher.engine.search_query import MAX_COMBINED_QUERIES, split_combined_query
+from phd_searcher.service.search_service import (
+    SearchService,
+    normalize_retrieval_query,
+    normalized_retrieval_queries,
+)
 from phd_searcher.typedef.search import SearchBody
 
 
@@ -19,6 +25,7 @@ from phd_searcher.typedef.search import SearchBody
         ("design dell'interazione", "interaction design"),
         ("progettazione dell\u2019interazione", "interaction design"),
         ("ingegneria navale", "naval engineering"),
+        ("IxD", "interaction design"),
         ("xray and architecture", "xray and architecture"),
     ],
 )
@@ -27,6 +34,30 @@ def test_retrieval_query_expands_only_standalone_domain_acronyms(
     normalized: str,
 ) -> None:
     assert normalize_retrieval_query(query) == normalized
+
+
+def test_combined_query_splits_single_plus_but_preserves_cplusplus() -> None:
+    assert split_combined_query("C++ + VR + interaction design") == [
+        "C++",
+        "VR",
+        "interaction design",
+    ]
+
+
+def test_combined_query_can_escape_a_literal_plus() -> None:
+    assert split_combined_query(r"CD4\+ T cells + VR") == ["CD4+ T cells", "VR"]
+
+
+def test_combined_query_normalizes_and_deduplicates_aliases() -> None:
+    assert normalized_retrieval_queries("VR + interaction design + ixd") == [
+        "virtual reality",
+        "interaction design",
+    ]
+
+
+def test_combined_query_has_a_bounded_number_of_clauses() -> None:
+    with pytest.raises(ValueError, match=f"at most {MAX_COMBINED_QUERIES}"):
+        SearchBody(query="+".join(f"topic {index}" for index in range(9)))
 
 
 PAYLOAD = {
@@ -88,9 +119,7 @@ async def test_search_defaults_to_verified_and_can_include_probable(container, q
     service = container.get(SearchService)
 
     verified = await service.search(SearchBody(query="robotics"))
-    inclusive = await service.search(
-        SearchBody(query="robotics", mode="include_probable")
-    )
+    inclusive = await service.search(SearchBody(query="robotics", mode="include_probable"))
 
     assert [hit.position_id for hit in verified.hits] == [1]
     assert {hit.position_id for hit in inclusive.hits} == {1, 2}
@@ -153,11 +182,7 @@ async def test_legacy_vector_without_status_is_never_silently_verified(container
         "positions",
         vectors_config=VectorParams(size=4, distance=Distance.COSINE),
     )
-    legacy_payload = {
-        key: value
-        for key, value in PAYLOAD.items()
-        if key not in {"verification_status", "confidence"}
-    }
+    legacy_payload = {key: value for key, value in PAYLOAD.items() if key not in {"verification_status", "confidence"}}
     await qdrant.upsert(
         "positions",
         points=[
@@ -171,9 +196,7 @@ async def test_legacy_vector_without_status_is_never_silently_verified(container
 
     service = container.get(SearchService)
     verified = await service.search(SearchBody(query="robotics"))
-    inclusive = await service.search(
-        SearchBody(query="robotics", mode="include_probable")
-    )
+    inclusive = await service.search(SearchBody(query="robotics", mode="include_probable"))
 
     assert verified.hits == []
     assert [hit.position_id for hit in inclusive.hits] == [1]
@@ -201,9 +224,7 @@ async def test_search_country_filter_accepts_common_italy_aliases(container, qdr
 async def test_search_accepts_multiple_country_and_position_type_filters(container, qdrant):
     await _seed(qdrant)
     service = container.get(SearchService)
-    result = await service.search(
-        SearchBody(query="robotics", countries=["Italia", "DE"], position_types=["phd"])
-    )
+    result = await service.search(SearchBody(query="robotics", countries=["Italia", "DE"], position_types=["phd"]))
     assert [hit.position_id for hit in result.hits] == [1]
     assert result.hits[0].position_type == "phd"
 
@@ -216,16 +237,51 @@ async def test_search_score_threshold_removes_irrelevant_neighbors(container, qd
     await _seed(qdrant)
     await qdrant.upsert(
         "positions",
-        points=[PointStruct(id=2, vector=[0.0, 1.0, 0.0, 0.0], payload={**PAYLOAD, "title": "Unrelated", "url": "https://example/2"})],
+        points=[
+            PointStruct(
+                id=2, vector=[0.0, 1.0, 0.0, 0.0], payload={**PAYLOAD, "title": "Unrelated", "url": "https://example/2"}
+            )
+        ],
     )
     service = container.get(SearchService)
     result = await service.search(SearchBody(query="robotics", min_score=0.5))
     assert [hit.position_id for hit in result.hits] == [1]
 
 
+async def test_combined_search_unions_clauses_and_keeps_best_score(container, qdrant, fake_model):
+    await qdrant.create_collection("positions", vectors_config=VectorParams(size=4, distance=Distance.COSINE))
+    await qdrant.upsert(
+        "positions",
+        points=[
+            PointStruct(id=1, vector=[1.0, 0.0, 0.0, 0.0], payload=PAYLOAD),
+            PointStruct(
+                id=2,
+                vector=[0.0, 1.0, 0.0, 0.0],
+                payload={**PAYLOAD, "title": "Interaction role", "url": "https://example/2"},
+            ),
+            PointStruct(
+                id=3,
+                vector=[0.8, 0.6, 0.0, 0.0],
+                payload={**PAYLOAD, "title": "Mixed role", "url": "https://example/3"},
+            ),
+        ],
+    )
+    fake_model.embed_queries = AsyncMock(return_value=[[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]])
+    service = container.get(SearchService)
+
+    result = await service.search(SearchBody(query="VR + interaction design + ixd", min_score=0.5))
+
+    fake_model.embed_queries.assert_awaited_once_with(["virtual reality", "interaction design"])
+    assert [hit.position_id for hit in result.hits] == [1, 2, 3]
+    assert result.hits[2].score == pytest.approx(0.8)
+    assert result.total == 3
+
+
 async def test_search_returns_related_institutions_from_separate_index(container, qdrant):
     await _seed(qdrant)
-    await qdrant.create_collection("positions_institutions", vectors_config=VectorParams(size=4, distance=Distance.COSINE))
+    await qdrant.create_collection(
+        "positions_institutions", vectors_config=VectorParams(size=4, distance=Distance.COSINE)
+    )
     await qdrant.upsert(
         "positions_institutions",
         points=[
@@ -259,6 +315,93 @@ async def test_search_deadline_filter(container, qdrant):
     assert [h.position_id for h in kept.hits] == [1]
     dropped = await service.search(SearchBody(query="robotics", deadline_after=date(2100, 1, 1)))
     assert dropped.hits == []
+
+
+async def test_nullable_filters_keep_unknown_values_after_known_matches(container, qdrant):
+    await qdrant.create_collection("positions", vectors_config=VectorParams(size=4, distance=Distance.COSINE))
+    await qdrant.upsert(
+        "positions",
+        points=[
+            PointStruct(
+                id=1,
+                vector=[0.9, 0.43589, 0.0, 0.0],
+                payload={
+                    **PAYLOAD,
+                    "title": "Known matching pay",
+                    "compensation_min": 60000,
+                    "compensation_max": 70000,
+                    "compensation_currency": "EUR",
+                },
+            ),
+            PointStruct(
+                id=2,
+                vector=[1.0, 0.0, 0.0, 0.0],
+                payload={
+                    **PAYLOAD,
+                    "title": "Unknown pay and deadline",
+                    "url": "https://example/2",
+                    "deadline": None,
+                    "deadline_ts": None,
+                },
+            ),
+            PointStruct(
+                id=3,
+                vector=[0.8, 0.6, 0.0, 0.0],
+                payload={
+                    **PAYLOAD,
+                    "title": "Known pay below threshold",
+                    "url": "https://example/3",
+                    "compensation_min": 20000,
+                    "compensation_max": 25000,
+                    "compensation_currency": "EUR",
+                },
+            ),
+        ],
+    )
+    service = container.get(SearchService)
+
+    result = await service.search(
+        SearchBody(
+            query="robotics",
+            compensation_min=50000,
+            deadline_after=date(2050, 1, 1),
+        )
+    )
+
+    assert [hit.position_id for hit in result.hits] == [1, 2]
+    assert result.hits[1].compensation_eur_max is None
+    assert result.hits[1].deadline is None
+    assert result.total == 2
+
+
+async def test_date_filter_keeps_unknown_dates_in_relevance_order(container, qdrant):
+    await qdrant.create_collection("positions", vectors_config=VectorParams(size=4, distance=Distance.COSINE))
+    await qdrant.upsert(
+        "positions",
+        points=[
+            PointStruct(
+                id=1,
+                vector=[0.9, 0.43589, 0.0, 0.0],
+                payload={**PAYLOAD, "title": "Known matching deadline"},
+            ),
+            PointStruct(
+                id=2,
+                vector=[1.0, 0.0, 0.0, 0.0],
+                payload={
+                    **PAYLOAD,
+                    "title": "Unknown deadline",
+                    "url": "https://example/2",
+                    "deadline": None,
+                    "deadline_ts": None,
+                },
+            ),
+        ],
+    )
+    service = container.get(SearchService)
+
+    result = await service.search(SearchBody(query="robotics", deadline_after=date(2050, 1, 1)))
+
+    assert [hit.position_id for hit in result.hits] == [2, 1]
 
 
 async def test_search_limit_is_optional_and_reports_total(container, qdrant):

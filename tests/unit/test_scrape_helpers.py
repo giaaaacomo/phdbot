@@ -9,7 +9,7 @@ from sqlalchemy.dialects import postgresql
 from phd_searcher.database.models.listing_page import ListingPage
 from phd_searcher.database.models.position import Position
 from phd_searcher.pipeline import scrape
-from phd_searcher.pipeline.normalize import NormalizedPosition
+from phd_searcher.pipeline.normalize import NormalizedPosition, synthetic_position_url
 from phd_searcher.pipeline.scrape import (
     _EURAXESS_PAGE_DELAY,
     _EURAXESS_RATE_LIMIT_COOLDOWN,
@@ -17,6 +17,7 @@ from phd_searcher.pipeline.scrape import (
     _is_permanent_source_denial,
     _page_budget,
     _position_values,
+    _upgrade_synthetic_position_urls,
     _upsert_items,
 )
 
@@ -127,7 +128,11 @@ async def test_listing_refresh_preserves_a_detail_deadline_when_raw_is_omitted()
         kind="university",
         url="https://example.test/jobs",
     )
-    session = SimpleNamespace(execute=AsyncMock())
+    session = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[SimpleNamespace(all=list), SimpleNamespace()]
+        )
+    )
 
     assert await _upsert_items(
         session,
@@ -142,3 +147,83 @@ async def test_listing_refresh_preserves_a_detail_deadline_when_raw_is_omitted()
         "deadline = CASE WHEN (excluded.deadline_raw IS NOT NULL) "
         "THEN excluded.deadline ELSE positions.deadline END"
     ) in sql
+
+
+@pytest.mark.asyncio
+async def test_real_detail_url_upgrades_the_exact_synthetic_position_identity():
+    page = ListingPage(id=9, url="https://example.test/jobs", kind="university")
+    synthetic = synthetic_position_url("Design role", page.url)
+    session = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[
+                SimpleNamespace(all=lambda: [(42, synthetic)]),
+                SimpleNamespace(),
+            ]
+        )
+    )
+
+    upgraded = await _upgrade_synthetic_position_urls(
+        session,
+        page,
+        [NormalizedPosition(title="Design role", url="https://example.test/job/42")],
+    )
+
+    assert upgraded == 1
+    statement = session.execute.await_args_list[1].args[0]
+    compiled = statement.compile(dialect=postgresql.dialect())
+    assert "UPDATE positions SET url=" in str(compiled)
+    assert compiled.params["url"] == "https://example.test/job/42"
+    assert "full_description=" in str(compiled)
+    assert "details_scraped_at=" in str(compiled)
+
+
+@pytest.mark.asyncio
+async def test_real_detail_url_upgrade_uses_the_stored_url_length():
+    page = ListingPage(id=9, url="https://example.test/jobs", kind="university")
+    synthetic = synthetic_position_url("Long URL role", page.url)
+    long_url = "https://example.test/job/" + "x" * 3000
+    session = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[
+                SimpleNamespace(all=lambda: [(42, synthetic)]),
+                SimpleNamespace(),
+            ]
+        )
+    )
+
+    await _upgrade_synthetic_position_urls(
+        session,
+        page,
+        [NormalizedPosition(title="Long URL role", url=long_url)],
+    )
+
+    statement = session.execute.await_args_list[1].args[0]
+    compiled = statement.compile(dialect=postgresql.dialect())
+    assert compiled.params["url"] == long_url[:2048]
+
+
+@pytest.mark.asyncio
+async def test_existing_real_url_deactivates_the_obsolete_synthetic_duplicate():
+    page = ListingPage(id=9, url="https://example.test/jobs", kind="university")
+    synthetic = synthetic_position_url("Duplicate role", page.url)
+    direct = "https://example.test/job/42"
+    session = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[
+                SimpleNamespace(all=lambda: [(42, synthetic), (84, direct)]),
+                SimpleNamespace(),
+            ]
+        )
+    )
+
+    resolved = await _upgrade_synthetic_position_urls(
+        session,
+        page,
+        [NormalizedPosition(title="Duplicate role", url=direct)],
+    )
+
+    assert resolved == 1
+    statement = session.execute.await_args_list[1].args[0]
+    compiled = statement.compile(dialect=postgresql.dialect())
+    assert "is_active=" in str(compiled)
+    assert compiled.params["is_active"] is False

@@ -167,8 +167,8 @@ async def test_feedback_for_missing_position_is_not_created() -> None:
     assert session.commits == 0
 
 
-def test_feedback_routes_are_exposed_in_openapi(client) -> None:
-    schema = client.get("/openapi.json").json()
+async def test_feedback_routes_are_exposed_in_openapi(client) -> None:
+    schema = (await client.get("/openapi.json")).json()
     create_path = schema["paths"]["/v1/positions/{position_id}/feedback"]
     retract_path = schema["paths"][
         "/v1/positions/{position_id}/feedback/{feedback_id}/retract"

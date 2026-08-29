@@ -2,19 +2,33 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time as monotonic_time
 import xml.etree.ElementTree as ET
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, time
 from typing import cast
 
 import httpx
 from injector import inject
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import DatetimeRange, FieldCondition, Filter, MatchAny, MatchValue, Range
+from qdrant_client.models import (
+    Condition,
+    DatetimeRange,
+    FieldCondition,
+    Filter,
+    IsEmptyCondition,
+    MatchAny,
+    MatchValue,
+    PayloadField,
+    Range,
+    ScoredPoint,
+)
 
 from phd_searcher.config.qdrant import QdrantConfig
 from phd_searcher.engine.model_helper import ModelHelper
+from phd_searcher.engine.search_query import split_combined_query
 from phd_searcher.opportunity_kinds import normalize_opportunity_kind
 from phd_searcher.position_types import classify_position
 from phd_searcher.typedef.search import (
@@ -35,6 +49,7 @@ _RETRIEVAL_ACRONYMS = {
     "vr": "virtual reality",
     "ar": "augmented reality",
     "hci": "human-computer interaction",
+    "ixd": "interaction design",
 }
 _RETRIEVAL_PHRASES = {
     "design dell'interazione": "interaction design",
@@ -49,10 +64,7 @@ _RETRIEVAL_PHRASES = {
     "realta virtuale": "virtual reality",
 }
 _RETRIEVAL_PHRASE = re.compile(
-    "|".join(
-        re.escape(phrase)
-        for phrase in sorted(_RETRIEVAL_PHRASES, key=len, reverse=True)
-    ),
+    "|".join(re.escape(phrase) for phrase in sorted(_RETRIEVAL_PHRASES, key=len, reverse=True)),
     re.I,
 )
 _RETRIEVAL_ACRONYM = re.compile(
@@ -75,6 +87,45 @@ def normalize_retrieval_query(value: str) -> str:
         lambda match: _RETRIEVAL_ACRONYMS[match.group(0).casefold()],
         value,
     )
+
+
+def normalized_retrieval_queries(value: str) -> list[str]:
+    """Return de-duplicated OR clauses after audited query normalization."""
+    queries: list[str] = []
+    seen: set[str] = set()
+    for part in split_combined_query(value):
+        normalized = normalize_retrieval_query(part).strip()
+        key = normalized.casefold()
+        if key not in seen:
+            seen.add(key)
+            queries.append(normalized)
+    return queries
+
+
+def _fuse_points(point_groups: Iterable[Sequence[ScoredPoint]]) -> list[ScoredPoint]:
+    """OR-fuse semantic searches, keeping each point's best similarity."""
+    best: dict[int, ScoredPoint] = {}
+    for points in point_groups:
+        for point in points:
+            point_id = int(point.id)
+            previous = best.get(point_id)
+            if previous is None or point.score > previous.score:
+                best[point_id] = point
+    return sorted(best.values(), key=lambda point: (-point.score, int(point.id)))
+
+
+def _range_or_unknown(condition: FieldCondition, *, key: str) -> Filter:
+    """Apply a range to known values while retaining missing values."""
+    return Filter(
+        should=[
+            condition,
+            IsEmptyCondition(is_empty=PayloadField(key=key)),
+        ]
+    )
+
+
+def _has_unknown_compensation(hit: SearchHit) -> bool:
+    return hit.compensation_eur_max is None
 
 
 def _payload_confidence(value: object) -> float | None:
@@ -130,13 +181,10 @@ class SearchService:
         self._collection = config.collection
 
     async def search(self, body: SearchBody) -> SearchResult:
-        vector = (
-            await self._model.embed_queries(
-                [normalize_retrieval_query(body.query)]
-            )
-        )[0]
-        must: list[FieldCondition] = []
-        must_not: list[FieldCondition] = []
+        queries = normalized_retrieval_queries(body.query)
+        vectors = await self._model.embed_queries(queries)
+        must: list[Condition] = []
+        must_not: list[Condition] = []
         if body.mode == "verified_only":
             # Verification is an explicit evidence claim. Missing legacy
             # metadata must never be silently promoted to verified.
@@ -161,22 +209,36 @@ class SearchService:
             must.append(FieldCondition(key="university", match=MatchAny(any=universities)))
         if body.deadline_after or body.deadline_before:
             must.append(
-                FieldCondition(
-                    key="deadline_ts",
-                    range=DatetimeRange(
-                        gte=datetime.combine(body.deadline_after, time.min, tzinfo=UTC) if body.deadline_after else None,
-                        lte=datetime.combine(body.deadline_before, time.max, tzinfo=UTC) if body.deadline_before else None,
+                _range_or_unknown(
+                    FieldCondition(
+                        key="deadline_ts",
+                        range=DatetimeRange(
+                            gte=datetime.combine(body.deadline_after, time.min, tzinfo=UTC)
+                            if body.deadline_after
+                            else None,
+                            lte=datetime.combine(body.deadline_before, time.max, tzinfo=UTC)
+                            if body.deadline_before
+                            else None,
+                        ),
                     ),
+                    key="deadline_ts",
                 )
             )
         if body.posted_after or body.posted_before:
             must.append(
-                FieldCondition(
-                    key="published_ts",
-                    range=DatetimeRange(
-                        gte=datetime.combine(body.posted_after, time.min, tzinfo=UTC) if body.posted_after else None,
-                        lte=datetime.combine(body.posted_before, time.max, tzinfo=UTC) if body.posted_before else None,
+                _range_or_unknown(
+                    FieldCondition(
+                        key="published_ts",
+                        range=DatetimeRange(
+                            gte=datetime.combine(body.posted_after, time.min, tzinfo=UTC)
+                            if body.posted_after
+                            else None,
+                            lte=datetime.combine(body.posted_before, time.max, tzinfo=UTC)
+                            if body.posted_before
+                            else None,
+                        ),
                     ),
+                    key="published_ts",
                 )
             )
         count = (await self._qdrant.count(self._collection, exact=True)).count
@@ -190,13 +252,19 @@ class SearchService:
                 institution_must.append(FieldCondition(key="country", match=MatchAny(any=countries)))
             if universities:
                 institution_must.append(FieldCondition(key="university", match=MatchAny(any=universities)))
-            institution_response = await self._qdrant.query_points(
-                institution_collection,
-                query=vector,
-                limit=12,
-                score_threshold=max(body.min_score - 0.2, 0.25),
-                query_filter=Filter(must=institution_must) if institution_must else None,
+            institution_responses = await asyncio.gather(
+                *(
+                    self._qdrant.query_points(
+                        institution_collection,
+                        query=vector,
+                        limit=12,
+                        score_threshold=max(body.min_score - 0.2, 0.25),
+                        query_filter=(Filter(must=institution_must) if institution_must else None),
+                    )
+                    for vector in vectors
+                )
             )
+            institution_points = _fuse_points(response.points for response in institution_responses)[:12]
             institutions = [
                 InstitutionHit(
                     score=point.score,
@@ -208,39 +276,32 @@ class SearchService:
                     spontaneous_application_url=(point.payload or {}).get("spontaneous_application_url"),
                     active_positions=int((point.payload or {}).get("active_positions", 0)),
                 )
-                for point in institution_response.points
+                for point in institution_points
             ]
-        response = await self._qdrant.query_points(
-            self._collection,
-            query=vector,
-            limit=count,
-            score_threshold=body.min_score,
-            query_filter=(
-                Filter(must=list(must), must_not=list(must_not))
-                if must or must_not
-                else None
-            ),
+        responses = await asyncio.gather(
+            *(
+                self._qdrant.query_points(
+                    self._collection,
+                    query=vector,
+                    limit=count,
+                    score_threshold=body.min_score,
+                    query_filter=(Filter(must=list(must), must_not=list(must_not)) if must or must_not else None),
+                )
+                for vector in vectors
+            )
         )
+        points = _fuse_points(response.points for response in responses)
         hits: list[SearchHit] = []
-        for point in response.points:
+        for point in points:
             payload = point.payload or {}
             raw_verification_status = payload.get("verification_status")
-            verification_status = (
-                "verified"
-                if raw_verification_status == "verified"
-                else "probable"
-            )
+            verification_status = "verified" if raw_verification_status == "verified" else "probable"
             verification_metadata_missing = raw_verification_status not in {
                 "verified",
                 "probable",
             }
-            uncertainty_flags = _payload_uncertainty_flags(
-                payload.get("uncertainty_flags")
-            )
-            if (
-                verification_metadata_missing
-                and "verification" not in uncertainty_flags
-            ):
+            uncertainty_flags = _payload_uncertainty_flags(payload.get("uncertainty_flags"))
+            if verification_metadata_missing and "verification" not in uncertainty_flags:
                 uncertainty_flags.append("verification")
             hits.append(
                 SearchHit(
@@ -265,9 +326,7 @@ class SearchService:
                         str(payload.get("title", "")),
                         explicit=payload.get("position_type"),
                     ),
-                    opportunity_kind=normalize_opportunity_kind(
-                        payload.get("opportunity_kind")
-                    ),
+                    opportunity_kind=normalize_opportunity_kind(payload.get("opportunity_kind")),
                     verification_status=cast(
                         VerificationStatus,
                         verification_status,
@@ -301,9 +360,14 @@ class SearchService:
             hits = [
                 hit
                 for hit in hits
-                if hit.compensation_eur_max is not None and hit.compensation_eur_max >= body.compensation_min
+                if hit.compensation_eur_max is None or hit.compensation_eur_max >= body.compensation_min
             ]
-        if body.sort_by != "relevance":
+        if body.sort_by == "relevance":
+            hits.sort(
+                key=lambda hit: hit.score,
+                reverse=body.sort_order == "desc",
+            )
+        else:
             key_name = {
                 "uncertainty": "uncertainty_percent",
                 "compensation": "compensation_eur_max",
@@ -315,6 +379,12 @@ class SearchService:
             missing = [hit for hit in hits if getattr(hit, key_name) in (None, "")]
             available.sort(key=lambda hit: getattr(hit, key_name), reverse=body.sort_order == "desc")
             hits = available + missing
+        if body.compensation_min is not None:
+            # Stable partition: matching known values first, retained unknowns
+            # second, without changing the requested ordering within either.
+            hits = [hit for hit in hits if not _has_unknown_compensation(hit)] + [
+                hit for hit in hits if _has_unknown_compensation(hit)
+            ]
         total = len(hits)
         if body.limit is not None:
             hits = hits[: body.limit]

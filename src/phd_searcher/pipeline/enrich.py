@@ -12,8 +12,9 @@ import re
 from collections import deque
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from html import unescape as html_unescape
 from io import BytesIO
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -74,6 +75,17 @@ _FRAGMENT_CONTAINER_HINT = re.compile(
     r"(?:accordion|call|card|item|job|opening|opportunit|panel|position|vacanc)",
     re.I,
 )
+_DETAIL_DESCRIPTION_HINT = re.compile(
+    r"(?:^|[-_\s])(?:job|position|posting|role|vacanc(?:y|ies))?"
+    r"[-_\s]*(?:description|details?|content)(?:$|[-_\s])",
+    re.I,
+)
+_PAGE_CHROME_HINT = re.compile(
+    r"(?:^|[-_\s])(?:breadcrumb|cookie|footer|header|menu|nav(?:igation)?|"
+    r"pagination|related|share|sidebar|social|toolbar)(?:$|[-_\s])",
+    re.I,
+)
+_MIN_GENERIC_DETAIL_CHARS = 120
 
 
 class _UnsupportedDirectDocumentError(RuntimeError):
@@ -93,6 +105,274 @@ def _markdown(result: CrawlResult) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
+
+
+def _normalized_document_url(value: str, *, base_url: str) -> str:
+    parsed = urlsplit(urljoin(base_url, value))
+    path = parsed.path.rstrip("/") or "/"
+    return urlunsplit((parsed.scheme.casefold(), parsed.netloc.casefold(), path, parsed.query, ""))
+
+
+def _jsonld_string(raw: str, key: str) -> str | None:
+    match = re.search(
+        rf'"{re.escape(key)}"\s*:\s*"((?:\\.|[^"\\])*)"',
+        raw,
+        re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    encoded = match.group(1)
+    try:
+        decoded = json.loads(f'"{encoded}"', strict=False)
+    except json.JSONDecodeError:
+        decoded = encoded.replace("\\/", "/")
+    return html_unescape(decoded).strip() if isinstance(decoded, str) else None
+
+
+def _recover_malformed_job_posting(raw: str) -> dict[str, object] | None:
+    """Recover a few attributable facts from invalid publisher JSON-LD.
+
+    Some job boards put literal newlines inside the JSON description, making
+    the whole script invalid. Only explicit scalar fields are recovered.
+    """
+    if len(re.findall(r'"@type"\s*:\s*"JobPosting"', raw, re.IGNORECASE)) != 1:
+        return None
+    raw_type = _jsonld_string(raw, "@type")
+    if raw_type is None or raw_type.casefold() != "jobposting":
+        return None
+    posting: dict[str, object] = {"@type": "JobPosting"}
+    for key in ("url", "@id", "datePosted", "validThrough", "description"):
+        value = _jsonld_string(raw, key)
+        if value:
+            posting[key] = value
+    currency = _jsonld_string(raw, "currency")
+    unit_text = _jsonld_string(raw, "unitText")
+    if currency or unit_text:
+        posting["baseSalary"] = {
+            "currency": currency,
+            "value": {"unitText": unit_text},
+        }
+    return posting
+
+
+def _selected_job_posting(
+    html: str | None,
+    *,
+    expected_url: str | None = None,
+) -> dict[str, object] | None:
+    """Return the one JobPosting attributable to this detail page."""
+    if not html:
+        return None
+    soup = BeautifulSoup(html, "html.parser")
+    postings: list[dict[str, object]] = []
+
+    def collect(value: object) -> None:
+        if isinstance(value, list):
+            for item in value:
+                collect(item)
+            return
+        if not isinstance(value, dict):
+            return
+        raw_type = value.get("@type")
+        types = raw_type if isinstance(raw_type, list) else [raw_type]
+        if any(str(item).casefold() == "jobposting" for item in types):
+            postings.append(value)
+        for key in ("@graph", "mainEntity", "itemListElement"):
+            collect(value.get(key))
+
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw = script.get_text()
+        try:
+            collect(json.loads(raw))
+        except (TypeError, json.JSONDecodeError):
+            recovered = _recover_malformed_job_posting(raw)
+            if recovered is not None:
+                postings.append(recovered)
+    if not postings:
+        return None
+    if len(postings) == 1:
+        posting = postings[0]
+    elif expected_url:
+        normalized_expected = _normalized_document_url(
+            expected_url,
+            base_url=expected_url,
+        )
+        matching = [
+            posting
+            for posting in postings
+            if isinstance(posting.get("url") or posting.get("@id"), str)
+            and _normalized_document_url(
+                str(posting.get("url") or posting.get("@id")),
+                base_url=expected_url,
+            )
+            == normalized_expected
+        ]
+        if len(matching) != 1:
+            return None
+        posting = matching[0]
+    else:
+        # Multiple JobPosting objects without an attributable URL are
+        # ambiguous.  Omitting metadata is safer than assigning a neighbouring
+        # vacancy's deadline or salary.
+        return None
+    return posting
+
+
+def _job_posting_metadata(
+    html: str | None,
+    *,
+    expected_url: str | None = None,
+) -> str:
+    """Extract standard JobPosting facts that rendered markdown often drops."""
+    posting = _selected_job_posting(html, expected_url=expected_url)
+    if posting is None:
+        return ""
+    lines: list[str] = []
+    date_posted = posting.get("datePosted")
+    if isinstance(date_posted, str) and date_posted.strip():
+        lines.append(f"Published on: {date_posted.strip()}")
+    valid_through = posting.get("validThrough")
+    if isinstance(valid_through, str) and valid_through.strip():
+        lines.append(f"Application deadline: {valid_through.strip()}")
+    base_salary = posting.get("baseSalary")
+    if isinstance(base_salary, dict):
+        currency = str(base_salary.get("currency") or "").strip()
+        raw_value = base_salary.get("value")
+        salary_text = ""
+        if isinstance(raw_value, dict):
+            unit_text = raw_value.get("unitText")
+            unit = unit_text.strip() if isinstance(unit_text, str) else ""
+            minimum = raw_value.get("minValue")
+            maximum = raw_value.get("maxValue")
+            value = raw_value.get("value")
+            if minimum is not None and maximum is not None:
+                salary_text = f"{minimum} - {maximum}"
+            elif value is not None:
+                salary_text = str(value)
+            elif minimum is not None:
+                salary_text = str(minimum)
+            elif maximum is not None:
+                salary_text = str(maximum)
+            elif unit and re.search(r"\d", unit):
+                # Some publishers put the complete native salary string in
+                # unitText instead of using Schema.org's numeric fields.
+                salary_text = unit
+            if salary_text and unit and not re.search(r"\d", unit):
+                period = {
+                    "HOUR": "per hour",
+                    "DAY": "per day",
+                    "WEEK": "per week",
+                    "MONTH": "per month",
+                    "YEAR": "per year",
+                }.get(unit.upper(), unit)
+                salary_text = f"{salary_text} {period}"
+        elif raw_value is not None:
+            salary_text = str(raw_value)
+        if salary_text:
+            suffix = f" {currency}" if currency and currency.casefold() not in salary_text.casefold() else ""
+            lines.append(f"Salary: {salary_text}{suffix}")
+    return "\n".join(lines)
+
+
+def _remove_page_chrome(root: Tag | BeautifulSoup) -> None:
+    """Remove controls and page furniture before extracting readable text."""
+    for node in list(
+        root.find_all(
+            [
+                "button",
+                "aside",
+                "footer",
+                "form",
+                "header",
+                "img",
+                "input",
+                "nav",
+                "noscript",
+                "picture",
+                "select",
+                "script",
+                "style",
+                "svg",
+                "template",
+            ]
+        )
+    ):
+        node.decompose()
+    for node in list(root.find_all(True)):
+        attributes = " ".join(
+            [
+                str(node.get("id") or ""),
+                str(node.get("role") or ""),
+                str(node.get("aria-label") or ""),
+                *[str(value) for value in (node.get("class") or [])],
+            ]
+        )
+        if _PAGE_CHROME_HINT.search(attributes):
+            node.decompose()
+
+
+def _readable_html_text(value: str) -> str:
+    """Convert one HTML fragment to compact plain text with paragraph breaks."""
+    soup = BeautifulSoup(value, "html.parser")
+    _remove_page_chrome(soup)
+    for node in soup.find_all("br"):
+        node.replace_with("\n")
+    for node in soup.find_all(
+        ["address", "article", "dd", "div", "dl", "dt", "h1", "h2", "h3", "h4", "h5", "li", "p", "section", "tr"]
+    ):
+        node.insert_before("\n")
+        node.insert_after("\n")
+    lines: list[str] = []
+    for raw_line in soup.get_text(" ", strip=False).splitlines():
+        line = " ".join(raw_line.split())
+        if line and (not lines or line != lines[-1]):
+            lines.append(line)
+    return "\n\n".join(lines)
+
+
+def _clean_detail_document(
+    html: str | None,
+    fallback_document: str,
+    *,
+    expected_url: str | None = None,
+) -> str:
+    """Prefer an attributable description over whole-page crawler markdown."""
+    posting = _selected_job_posting(html, expected_url=expected_url)
+    if posting is not None:
+        description = posting.get("description")
+        if isinstance(description, str):
+            cleaned = _readable_html_text(description)
+            if len(" ".join(cleaned.split())) >= 40:
+                return cleaned
+
+    if html:
+        soup = BeautifulSoup(html, "html.parser")
+        hinted: list[Tag] = []
+        for node in soup.find_all(True):
+            attributes = " ".join(
+                [
+                    str(node.get("id") or ""),
+                    str(node.get("aria-label") or ""),
+                    str(node.get("itemprop") or ""),
+                    *[str(value) for value in (node.get("class") or [])],
+                ]
+            )
+            if _DETAIL_DESCRIPTION_HINT.search(attributes):
+                hinted.append(node)
+        for candidates in (
+            hinted,
+            list(soup.find_all("main")),
+            list(soup.find_all("article")),
+            list(soup.select('[role="main"]')),
+        ):
+            cleaned_candidates = [_readable_html_text(str(node)) for node in candidates]
+            cleaned_candidates = [
+                value for value in cleaned_candidates if len(" ".join(value.split())) >= _MIN_GENERIC_DETAIL_CHARS
+            ]
+            if cleaned_candidates:
+                return max(cleaned_candidates, key=len)
+
+    return fallback_document.strip()
 
 
 def _is_euraxess_url(url: str) -> bool:
@@ -120,20 +400,54 @@ def _apply_extracted_detail_metadata(
 ) -> None:
     """Fill detail-only metadata without erasing richer stored values."""
     compensation, duration, published = extract_terms(full_description)
-    if compensation and not position.compensation_raw:
+    current_compensation = parse_compensation(position.compensation_raw)
+    candidate_compensation = parse_compensation(compensation)
+    replace_compensation = not position.compensation_raw or (
+        not any(current_compensation) and any(candidate_compensation)
+    )
+    if compensation and replace_compensation:
         position.compensation_raw = compensation
         (
             position.compensation_min,
             position.compensation_max,
             position.compensation_currency,
             position.compensation_period,
-        ) = parse_compensation(compensation)
+        ) = candidate_compensation
     if duration and not position.duration_raw:
         position.duration_raw = duration
-    if published and not position.published_raw:
+    explicit_published = next(
+        (line.strip() for line in full_description.splitlines() if line.strip().casefold().startswith("published on:")),
+        None,
+    )
+    parsed_explicit_published = parse_deadline(explicit_published)
+    if (
+        explicit_published
+        and parsed_explicit_published is not None
+        and (position.published_at is None or position.published_at == parsed_explicit_published)
+    ):
+        position.published_raw = explicit_published
+        position.published_at = parsed_explicit_published
+    elif published and not position.published_raw:
         position.published_raw = published
         position.published_at = parse_deadline(published)
-    if position.deadline is None:
+
+    explicit_deadline = next(
+        (
+            line.strip()
+            for line in full_description.splitlines()
+            if line.strip().casefold().startswith("application deadline:")
+        ),
+        None,
+    )
+    parsed_explicit_deadline = parse_deadline(explicit_deadline)
+    if (
+        explicit_deadline
+        and parsed_explicit_deadline is not None
+        and (position.deadline is None or position.deadline == parsed_explicit_deadline)
+    ):
+        position.deadline_raw = explicit_deadline
+        position.deadline = parsed_explicit_deadline
+    elif position.deadline is None:
         deadline_raw, deadline = extract_deadline(full_description)
         if deadline is not None:
             position.deadline_raw = deadline_raw
@@ -157,9 +471,7 @@ def _is_access_block(message: str) -> bool:
 
 def _extract_pdf_text(payload: bytes) -> str:
     if len(payload) > _MAX_DIRECT_DOCUMENT_BYTES:
-        raise _UnsupportedDirectDocumentError(
-            f"PDF exceeds {_MAX_DIRECT_DOCUMENT_BYTES} bytes"
-        )
+        raise _UnsupportedDirectDocumentError(f"PDF exceeds {_MAX_DIRECT_DOCUMENT_BYTES} bytes")
     if not payload.lstrip().startswith(b"%PDF-"):
         raise _UnsupportedDirectDocumentError("download is not a PDF")
     try:
@@ -182,24 +494,18 @@ async def _fetch_direct_document(url: str) -> str:
         response.raise_for_status()
         content_length = response.headers.get("content-length")
         if content_length and int(content_length) > _MAX_DIRECT_DOCUMENT_BYTES:
-            raise _UnsupportedDirectDocumentError(
-                f"PDF exceeds {_MAX_DIRECT_DOCUMENT_BYTES} bytes"
-            )
+            raise _UnsupportedDirectDocumentError(f"PDF exceeds {_MAX_DIRECT_DOCUMENT_BYTES} bytes")
         content_type = response.headers.get("content-type", "").casefold()
         chunks: list[bytes] = []
         downloaded = 0
         async for chunk in response.aiter_bytes():
             downloaded += len(chunk)
             if downloaded > _MAX_DIRECT_DOCUMENT_BYTES:
-                raise _UnsupportedDirectDocumentError(
-                    f"PDF exceeds {_MAX_DIRECT_DOCUMENT_BYTES} bytes"
-                )
+                raise _UnsupportedDirectDocumentError(f"PDF exceeds {_MAX_DIRECT_DOCUMENT_BYTES} bytes")
             chunks.append(chunk)
     payload = b"".join(chunks)
     if "application/pdf" not in content_type and not payload.lstrip().startswith(b"%PDF-"):
-        raise _UnsupportedDirectDocumentError(
-            f"unsupported download content-type: {content_type or 'missing'}"
-        )
+        raise _UnsupportedDirectDocumentError(f"unsupported download content-type: {content_type or 'missing'}")
     return await asyncio.to_thread(_extract_pdf_text, payload)
 
 
@@ -251,19 +557,14 @@ def _extract_fragment_document(html: str, *, fragment: str, title: str) -> str |
     soup = BeautifulSoup(html, "html.parser")
     key = unquote(fragment)
     target = soup.find(id=key) or soup.find(None, {"name": key})
-    controller = soup.find(
-        lambda node: isinstance(node, Tag)
-        and key in _attribute_tokens(node.get("aria-controls"))
-    )
+    controller = soup.find(lambda node: isinstance(node, Tag) and key in _attribute_tokens(node.get("aria-controls")))
     if isinstance(target, Tag):
         heading = _clean_dom_text(controller) if isinstance(controller, Tag) else ""
         controlled_ids = _attribute_tokens(target.get("aria-controls"))
         if controlled_ids:
             heading = _clean_dom_text(target)
             controlled_targets = [
-                candidate
-                for controlled in controlled_ids
-                if isinstance((candidate := soup.find(id=controlled)), Tag)
+                candidate for controlled in controlled_ids if isinstance((candidate := soup.find(id=controlled)), Tag)
             ]
             # One controller spanning multiple panels is not attributable to a
             # single candidate without page-specific knowledge.
@@ -272,20 +573,13 @@ def _extract_fragment_document(html: str, *, fragment: str, title: str) -> str |
             target = controlled_targets[0]
         text = _clean_dom_text(target)
         combined = " ".join(part for part in (heading, text) if part).strip()
-        if (
-            _has_attributable_fragment_evidence(combined, title)
-            and len(combined) <= _MAX_FRAGMENT_EVIDENCE_CHARS
-        ):
+        if _has_attributable_fragment_evidence(combined, title) and len(combined) <= _MAX_FRAGMENT_EVIDENCE_CHARS:
             return combined
 
     if not key.startswith("position-"):
         return None
     wanted = " ".join(title.split()).casefold()
-    exact_nodes = [
-        node
-        for node in soup.find_all(string=True)
-        if " ".join(str(node).split()).casefold() == wanted
-    ]
+    exact_nodes = [node for node in soup.find_all(string=True) if " ".join(str(node).split()).casefold() == wanted]
     if len(exact_nodes) != 1:
         return None
     node = exact_nodes[0].parent
@@ -337,17 +631,26 @@ async def _crawl_detail_document(
         if _is_access_block(message):
             raise _AccessBlockedError(message)
         raise RuntimeError(message)
-    document = _markdown(result)
-    if not document:
+    fallback_document = _markdown(result)
+    if not fallback_document:
         raise RuntimeError(f"empty detail page: {url}")
-    return document
+    result_html = getattr(result, "html", None)
+    html = result_html if isinstance(result_html, str) else None
+    document = _clean_detail_document(
+        html,
+        fallback_document,
+        expected_url=url,
+    )
+    metadata = _job_posting_metadata(
+        html,
+        expected_url=url,
+    )
+    return f"{metadata}\n{document}" if metadata else document
 
 
 def _cooldown_seconds(streak: int) -> float:
     """Backoff host-wide: 5, 10, 20, 40, poi 60 minuti."""
-    return float(
-        min(_EURAXESS_RATE_LIMIT_COOLDOWN * (2 ** max(streak - 1, 0)), _EURAXESS_MAX_COOLDOWN)
-    )
+    return float(min(_EURAXESS_RATE_LIMIT_COOLDOWN * (2 ** max(streak - 1, 0)), _EURAXESS_MAX_COOLDOWN))
 
 
 def _checkpoint_int(value: object) -> int:
@@ -370,9 +673,7 @@ def _has_attributable_fragment_evidence(value: str, title: str) -> bool:
 
 
 def _has_authoritative_screening(*, manual: bool, source: str, status: str) -> bool:
-    return (
-        manual or source in {"llm", "router", "cache"} or source.startswith("quality")
-    ) and status in {
+    return (manual or source in {"llm", "router", "cache"} or source.startswith("quality")) and status in {
         "eligible",
         "review",
         "rejected",
@@ -527,9 +828,7 @@ def _apply_detail_screening(
         deadline_raw=position.deadline_raw,
     )
     if getattr(position, "opportunity_kind", "unknown") == "unknown":
-        position.opportunity_kind = classify_opportunity_kind_evidence(
-            [position.title, evidence_document]
-        )
+        position.opportunity_kind = classify_opportunity_kind_evidence([position.title, evidence_document])
     if position.opportunity_kind in {"unknown", "information"}:
         # A fetched FAQ/application guide may contain PhD and application
         # vocabulary without representing a searchable call. Preserve it for
@@ -618,16 +917,10 @@ async def _run_details(
     cooldown_until = _parse_timestamp(checkpoint.get("euraxess_cooldown_until"))
     raw_blocked_hosts = checkpoint.get("blocked_detail_hosts", [])
     blocked_hosts = raw_blocked_hosts if isinstance(raw_blocked_hosts, list) else []
-    blocked_detail_hosts = {
-        str(host).casefold()
-        for host in blocked_hosts
-        if isinstance(host, str) and host
-    }
+    blocked_detail_hosts = {str(host).casefold() for host in blocked_hosts if isinstance(host, str) and host}
     remaining = None if limit is None else max(limit - processed, 0)
     today = local_today()
-    review_checkpoint = (
-        await progress.load_stage_checkpoint("review") if operation == "evidence" else {}
-    )
+    review_checkpoint = await progress.load_stage_checkpoint("review") if operation == "evidence" else {}
     cohort_scoped = review_checkpoint.get("cohort_complete") is False
 
     async with session_maker() as session:
@@ -649,7 +942,9 @@ async def _run_details(
                             ReviewAttempt.stage == "review",
                         )
                     )
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
             )
         stmt = (
             select(Position)
@@ -716,10 +1011,7 @@ async def _run_details(
                 position.screened_at = screened_at
                 if decision.status != "eligible":
                     position.indexed_at = None
-            legacy_revalidation = (
-                operation == "evidence"
-                and _needs_legacy_revalidation_evidence(position)
-            )
+            legacy_revalidation = operation == "evidence" and _needs_legacy_revalidation_evidence(position)
             if decision.status == target_status or legacy_revalidation:
                 selected.append(position)
             if decision.status in status_counts:
@@ -731,13 +1023,13 @@ async def _run_details(
             screening_rejected=status_counts["rejected"],
         )
         selected.sort(
-            key=lambda position: _detail_selection_priority(
-                position, operation=operation
-            )
-            if not cohort_scoped
-            else (
-                position.id not in cohort_position_ids,
-                *_detail_selection_priority(position, operation=operation),
+            key=lambda position: (
+                _detail_selection_priority(position, operation=operation)
+                if not cohort_scoped
+                else (
+                    position.id not in cohort_position_ids,
+                    *_detail_selection_priority(position, operation=operation),
+                )
             )
         )
         positions = selected if remaining is None else selected[:remaining]
@@ -746,9 +1038,7 @@ async def _run_details(
         active_ids = {position.id for position in positions}
         deferred_before_filter = len(deferred_details)
         deferred_details = {
-            key: value
-            for key, value in deferred_details.items()
-            if key.isdigit() and int(key) in active_ids
+            key: value for key, value in deferred_details.items() if key.isdigit() and int(key) in active_ids
         }
         deferred_processed += deferred_before_filter - len(deferred_details)
         deferred_total = max(deferred_total, deferred_processed + len(deferred_details))
@@ -768,6 +1058,7 @@ async def _run_details(
         fragment_cache: dict[str, dict[int, str | None]] = {}
 
         async with AsyncWebCrawler() as crawler:
+
             async def fragment_documents(base_url: str) -> dict[int, str | None]:
                 cached = fragment_cache.get(base_url)
                 if cached is not None:
@@ -798,8 +1089,7 @@ async def _run_details(
                     message = str(exc)
                     if "network" in message.casefold():
                         raise RuntimeError(
-                            f"fragment {operation} paused at {base_url}; "
-                            "resume when connectivity returns"
+                            f"fragment {operation} paused at {base_url}; resume when connectivity returns"
                         ) from exc
                     print(f"{operation} fragment fetch failed for {base_url}: {message}")
                     documents = {member.id: None for member in members}
@@ -819,13 +1109,9 @@ async def _run_details(
                 if progress.should_stop:
                     break
 
-                cooldown_active = (
-                    cooldown_until is not None and cooldown_until > datetime.now(UTC)
-                )
+                cooldown_active = cooldown_until is not None and cooldown_until > datetime.now(UTC)
                 take_deferred = bool(
-                    deferred
-                    and not cooldown_active
-                    and (not ready or since_deferred >= _DEFERRED_INTERLEAVE)
+                    deferred and not cooldown_active and (not ready or since_deferred >= _DEFERRED_INTERLEAVE)
                 )
                 if take_deferred:
                     position = deferred.popleft()
@@ -853,9 +1139,7 @@ async def _run_details(
                 if _has_url_fragment(position_url):
                     inline_text = position.description or position_title
                     try:
-                        extracted = (
-                            await fragment_documents(_fragment_base_url(position_url))
-                        ).get(position_id)
+                        extracted = (await fragment_documents(_fragment_base_url(position_url))).get(position_id)
                     except RetryInterruptedError:
                         break
                     evidence_text = (
@@ -901,11 +1185,7 @@ async def _run_details(
                         classified=classified,
                         promote_after_fetch=promote_after_fetch,
                         pipeline_run_id=progress.run_id,
-                        evidence_route=(
-                            "evidence:fragment_dom"
-                            if extracted
-                            else "evidence:inline_description"
-                        ),
+                        evidence_route=("evidence:fragment_dom" if extracted else "evidence:inline_description"),
                     )
                     if promote_after_fetch:
                         position.screened_at = datetime.now(UTC).replace(tzinfo=None)
@@ -993,9 +1273,7 @@ async def _run_details(
                     # Version the key when retry semantics change: an exhausted
                     # Crawl4AI retry must not prevent a newly supported PDF from
                     # being attempted after Resume.
-                    retry_key = (
-                        f"{operation}:fetch-{_DETAIL_FETCH_RETRY_VERSION}:{position_id}"
-                    )
+                    retry_key = f"{operation}:fetch-{_DETAIL_FETCH_RETRY_VERSION}:{position_id}"
                     result = await retry_async(
                         progress,
                         retry_key,
@@ -1018,9 +1296,7 @@ async def _run_details(
                     if isinstance(exc, _AccessBlockedError):
                         if position_host:
                             blocked_detail_hosts.add(position_host)
-                            await progress.save_checkpoint(
-                                blocked_detail_hosts=sorted(blocked_detail_hosts)
-                            )
+                            await progress.save_checkpoint(blocked_detail_hosts=sorted(blocked_detail_hosts))
                         if operation == "evidence":
                             position.review_state = "fetch_failed"
                             position.routing_reason = "evidence:access_blocked"
@@ -1061,10 +1337,7 @@ async def _run_details(
                             euraxess_cooldown_until=cooldown_until.isoformat(),
                         )
                         deferred.append(position)
-                        print(
-                            f"{operation}: queued EURAXESS position {position_id}; "
-                            f"retry in {int(cooldown)}s"
-                        )
+                        print(f"{operation}: queued EURAXESS position {position_id}; retry in {int(cooldown)}s")
                         continue
                     if "network" in message.casefold():
                         await clear_retry(progress, retry_key)
@@ -1073,8 +1346,7 @@ async def _run_details(
                             position.routing_reason = "evidence:network_unavailable"
                             await session.commit()
                         raise RuntimeError(
-                            f"detail {operation} paused at {position_url}; "
-                            "resume when connectivity returns"
+                            f"detail {operation} paused at {position_url}; resume when connectivity returns"
                         ) from exc
                     if operation == "evidence":
                         position.review_state = "fetch_failed"
@@ -1111,9 +1383,7 @@ async def _run_details(
                             promote_after_fetch=promote_after_fetch,
                             pipeline_run_id=progress.run_id,
                             evidence_route=(
-                                "evidence:pdf_fetched"
-                                if is_direct_document
-                                else "evidence:detail_fetched"
+                                "evidence:pdf_fetched" if is_direct_document else "evidence:detail_fetched"
                             ),
                         )
                         if promote_after_fetch:
@@ -1141,9 +1411,7 @@ async def _run_details(
                     deferred_total=deferred_total,
                     deferred_processed=deferred_processed,
                     euraxess_rate_limit_streak=rate_limit_streak,
-                    euraxess_cooldown_until=(
-                        None if cooldown_until is None else cooldown_until.isoformat()
-                    ),
+                    euraxess_cooldown_until=(None if cooldown_until is None else cooldown_until.isoformat()),
                 )
                 await asyncio.sleep(_EURAXESS_DETAIL_DELAY if is_euraxess else 1)
     print(f"{operation}: {enriched} full detail pages saved")
