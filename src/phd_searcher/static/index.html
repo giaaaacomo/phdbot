@@ -377,13 +377,12 @@
     <div class="card">
       <h2>Semantic search</h2>
       <div class="controls">
-        <input id="s-query" type="text" aria-describedby="s-query-help" title="Describe the subject or opportunity you are looking for. Use + to combine up to 8 searches as an OR union." placeholder="e.g. VR + XR + interaction design" style="flex:1;min-width:240px">
+        <input id="s-query" type="text" aria-label="Semantic search query" title="Use + to combine up to 8 searches: each part is searched separately and every result keeps its best score. Write \+ when the plus is part of a term." placeholder="e.g. VR + XR + interaction design" style="flex:1;min-width:240px">
         <button class="act" id="btn-search" title="Rank indexed opportunities by semantic relevance, then apply the filters below">Search</button>
         <select id="s-export-format" title="Portable format used to share the current result set"><option value="html">HTML</option><option value="pdf">PDF</option><option value="csv">CSV</option><option value="json">JSON</option></select>
         <button class="act ghost" id="btn-export" disabled title="Export the current search results and active filters">Export</button>
       </div>
       <div id="s-query-history" class="query-history" aria-label="Recent and frequent searches" hidden></div>
-      <div id="s-query-help" class="muted" style="font-size:12px;margin-top:7px">Use <code>+</code> to combine searches: each part is searched separately and the best score for every result is kept. Write <code>\+</code> when the plus is part of a term.</div>
       <div class="filter-layout">
         <div class="filter-section">
           <h3>Where and what</h3>
