@@ -1,6 +1,7 @@
 # PHDBOT
 
-Backend that scrapes open PhD positions from EU university websites and serves semantic search
+Backend that collects research and higher-education opportunities from European institutions and
+serves semantic search.
 
 FastAPI service with injector DI, litellm model access, and pydantic-settings.
 
@@ -9,6 +10,8 @@ university hierarchy, and conservatively admitted `specialist` institutions (suc
 of applied sciences, art/design academies and conservatories). Specialist records must belong to
 higher education, have an official website and minimum public documentation, and expose a ROR or
 WHED identifier; individually verified institutions can be maintained as curated exceptions.
+Audited official vacancy portals can likewise be kept in a small curated-source registry when
+generic discovery misses them; they complement normal discovery rather than replacing it.
 
 ## Quickstart
 
@@ -30,7 +33,8 @@ automatic screening), **Search** (semantic search, detail and portable export), 
 same origin.
 
 `POST /v1/search {"query": "...", "country": "IT?", "university": "?", "deadline_after": "?"}` → semantic hits.
-`GET /v1/positions/{id}`, `GET /v1/universities` (coverage), `GET /health` for probes.
+`GET /v1/positions/{id}`, `POST /v1/positions/{id}/detail-refresh`,
+`GET /v1/universities` (coverage), `GET /health` for probes.
 
 The canonical post-scrape cascade is `quality → review → evidence → review2 → enrich`. `quality`
 detects malformed URLs, markup/script fragments, navigation and systematically broken extraction
@@ -80,6 +84,10 @@ Each newly collected position records an immutable `first_seen_at` and a scrape-
 `last_seen_at` (the historical `scraped_at` API field remains as a compatibility alias). Search,
 details and portable exports identify when PHDBOT first pulled and last checked the source. Legacy
 records keep an unknown first-seen value instead of receiving a fabricated migration date.
+Opening a missing or recognizably noisy legacy detail queues an idempotent, attributable refetch;
+the existing text remains available until the replacement succeeds. An unlimited detail-enrichment
+run also pays down at most 25 high-value legacy captures, so cleanup never turns into an implicit
+archive-wide crawl.
 
 The GUI's recommended **Collect & publish** action refreshes universities and sources, scrapes,
 applies hard quality rules and indexes position results before enriching the separate institution

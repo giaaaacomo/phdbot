@@ -1412,9 +1412,15 @@ async function showDetail(id) {
   try {
     const { found, position: p } = await api("/v1/positions/" + id);
     if (found) markResultViewed(id, "details");
+    const cleanupNote = found && p.detail_cleanup_needed
+      ? `\n\n[The full detail is missing or contains legacy page chrome; a precise refetch ${p.detail_refresh_queued ? "is queued" : "will be queued"} for the next detail stage. Existing source text is preserved until then.]`
+      : "";
     el.textContent = found
-      ? `${p.title}\n\nType: ${positionTypeLabel(p.position_type)}\nOpportunity: ${opportunityKindLabel(p.opportunity_kind)}\nUniversity: ${p.university || "—"}\nCountry: ${flag(p.country)} ${p.country || "—"}\nPublished: ${p.published_at || "—"}\nFirst pulled by PHDBOT: ${fmtDate(p.first_seen_at)}\nLast checked by PHDBOT: ${fmtDate(p.last_seen_at || p.scraped_at)}\nDeadline: ${p.deadline || "—"}\nDuration: ${p.duration || "—"}\nCompensation: ${p.compensation || "—"}\n\n${p.description || "No additional description was extracted."}`
+      ? `${p.title}\n\nType: ${positionTypeLabel(p.position_type)}\nOpportunity: ${opportunityKindLabel(p.opportunity_kind)}\nUniversity: ${p.university || "—"}\nCountry: ${flag(p.country)} ${p.country || "—"}\nPublished: ${p.published_at || "—"}\nFirst pulled by PHDBOT: ${fmtDate(p.first_seen_at)}\nLast checked by PHDBOT: ${fmtDate(p.last_seen_at || p.scraped_at)}\nDeadline: ${p.deadline || "—"}\nDuration: ${p.duration || "—"}\nCompensation: ${p.compensation || "—"}${cleanupNote}\n\n${p.description || "No additional description was extracted."}`
       : "not found";
+    if (found && p.detail_cleanup_needed && !p.detail_refresh_queued) {
+      api(`/v1/positions/${id}/detail-refresh`, {method:"POST"}).catch(() => {});
+    }
   } catch (e) { el.textContent = e.message; }
 }
 window.showDetail = showDetail;

@@ -156,6 +156,14 @@ class PositionDetail(BaseModel):
     opportunity_kind: OpportunityKind = DEFAULT_OPPORTUNITY_KIND
     university: str
     country: str
+    detail_cleanup_needed: bool = False
+    detail_refresh_queued: bool = False
+
+
+class DetailRefreshStatus(BaseModel):
+    found: bool
+    cleanup_needed: bool = False
+    queued: bool = False
 
 
 class PositionLookup(BaseModel):

@@ -60,6 +60,10 @@ class Position(Base):
     research_group: Mapped[str | None] = mapped_column(String(512))
     full_description: Mapped[str | None] = mapped_column(Text)
     details_scraped_at: Mapped[datetime | None]
+    # Legacy whole-page captures are refreshed lazily.  The old evidence stays
+    # visible until a successful refetch clears the durable request.
+    detail_refresh_requested_at: Mapped[datetime | None] = mapped_column(index=True)
+    detail_cleanup_version: Mapped[str | None] = mapped_column(String(32))
     deadline_raw: Mapped[str | None] = mapped_column(String(256))
     deadline: Mapped[date | None]
     # Un bando diventa inattivo solo dopo due scansioni complete consecutive in cui

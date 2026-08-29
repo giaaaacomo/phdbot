@@ -53,6 +53,7 @@ def test_dashboard_source_contains_expected_controls():
     assert "toggleSearchPill(entry.query)" in dashboard
     assert "button.query-pill.active" in dashboard
     assert "each part is searched separately" in dashboard
+    assert "/detail-refresh" in dashboard
     assert 'id="s-query-help"' not in dashboard
     assert 'aria-label="Semantic search query"' in dashboard
     assert "Filter data unavailable" in dashboard

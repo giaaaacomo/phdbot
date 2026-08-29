@@ -410,6 +410,64 @@ def test_provisional_gate_allows_euraxess_but_not_weak_orphan() -> None:
     )
 
 
+def test_audited_curated_portal_exposes_generic_job_as_labelled_lead() -> None:
+    position = _position(
+        33,
+        UNKNOWN,
+        listing_page_id=7,
+        screening_status="review",
+        title="Interaction Designer",
+        url="https://jobs.example.edu/job/view/interaction-designer",
+        description="Example University · published 3 August 2026",
+        position_type="other",
+    )
+    listing = ListingPage(
+        id=7,
+        university_id=1,
+        url="https://jobs.example.edu/site/index",
+        source="seed",
+        schema_status="ok",
+        quality_status="healthy",
+    )
+
+    assert _verification_metadata(
+        position,
+        date(2026, 8, 9),
+        listing_page=listing,
+    ) == (
+        "probable",
+        None,
+        60,
+        ("open_status", "details"),
+    )
+
+
+def test_global_seed_source_does_not_get_curated_institution_exception() -> None:
+    position = _position(
+        34,
+        UNKNOWN,
+        university_id=None,
+        listing_page_id=8,
+        screening_status="review",
+        title="Interaction Designer",
+        position_type="other",
+    )
+    listing = ListingPage(
+        id=8,
+        university_id=None,
+        url="https://example.test/jobs",
+        source="seed",
+        schema_status="ok",
+        quality_status="healthy",
+    )
+
+    assert not is_provisional_eligible(
+        position,
+        listing_page=listing,
+        today=date(2026, 8, 9),
+    )
+
+
 @pytest.mark.parametrize(
     ("position_id", "title", "deadline", "deadline_raw"),
     [

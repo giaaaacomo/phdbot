@@ -29,6 +29,7 @@ from phd_searcher.clock import local_today
 from phd_searcher.database.models.position import Position
 from phd_searcher.database.models.review_attempt import ReviewAttempt
 from phd_searcher.database.models.university import University
+from phd_searcher.detail_cleanup import DETAIL_CLEANUP_VERSION
 from phd_searcher.pipeline.normalize import (
     extract_deadline,
     extract_research_group,
@@ -69,6 +70,7 @@ _MAX_DIRECT_DOCUMENT_BYTES: int = 40 * 1024 * 1024
 _MAX_PDF_EVIDENCE_CHARS: int = 200_000
 _DETAIL_GUARD_VERSION = "detail-guard-v2"
 _DETAIL_FETCH_RETRY_VERSION = "v4"
+_LEGACY_DETAIL_CLEANUP_BATCH = 25
 _LEGACY_REVALIDATION_VERSIONS = ("hybrid-v2", "hybrid-v3", "hybrid-v4")
 _DURABLE_EVIDENCE_STATES = ("needs_evidence", "semantic_uncertain", "fetch_failed")
 _FRAGMENT_CONTAINER_HINT = re.compile(
@@ -752,6 +754,22 @@ def _apply_detail_screening(
     """Route fetched text and block only explicit post-fetch contradictions."""
     position.position_type = classified
     if not promote_after_fetch:
+        # Evidence collection must preserve an existing public verdict, but a
+        # newly scraped row can still be in the internal ``pending`` state.
+        # Leaving it there strands the attributable document outside the deep
+        # review candidate set.  Promote only that non-verdict state to the
+        # reversible review queue; eligible/rejected/manual decisions remain
+        # untouched.
+        if position.screening_status == "pending" and not getattr(
+            position, "screening_manual", False
+        ):
+            position.screening_status = "review"
+            position.screening_reason = "evidence_ready"
+            position.screening_source = "router"
+            position.screening_decision = "review"
+            position.screening_confidence = None
+            position.screening_evidence = None
+            position.screening_model = None
         position.review_state = "ready_deep_review"
         position.routing_reason = evidence_route
         return
@@ -946,16 +964,65 @@ async def _run_details(
                 .scalars()
                 .all()
             )
+        if operation == "enrich" and remaining is None:
+            # A full refresh pays down a tiny, high-value slice of legacy page
+            # chrome.  It never expands into an archive-wide refetch and the
+            # request is committed before crawling, so Stop/Resume is durable.
+            legacy_cleanup = (
+                (
+                    await session.execute(
+                        select(Position)
+                        .where(Position.full_description.is_not(None))
+                        .where(Position.detail_refresh_requested_at.is_(None))
+                        .where(
+                            or_(
+                                Position.detail_cleanup_version.is_(None),
+                                Position.detail_cleanup_version != DETAIL_CLEANUP_VERSION,
+                            )
+                        )
+                        .where(Position.is_active.is_(True))
+                        .where((Position.deadline.is_(None)) | (Position.deadline >= today))
+                        .where(Position.screening_status == "eligible")
+                        .where(
+                            or_(
+                                Position.full_description.contains("!["),
+                                Position.full_description.ilike("%skip to content%"),
+                                Position.full_description.ilike("%accept all cookies%"),
+                                Position.full_description.ilike("%cookie settings%"),
+                            )
+                        )
+                        .order_by(Position.indexed_at.desc().nulls_last(), Position.scraped_at.desc())
+                        .limit(_LEGACY_DETAIL_CLEANUP_BATCH)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            requested_at = datetime.now(UTC).replace(tzinfo=None)
+            for position in legacy_cleanup:
+                position.detail_refresh_requested_at = requested_at
+            if legacy_cleanup:
+                await session.commit()
         stmt = (
             select(Position)
             .outerjoin(University, Position.university_id == University.id)
-            .where(Position.full_description.is_(None))
+            .where(
+                or_(
+                    Position.full_description.is_(None),
+                    Position.detail_refresh_requested_at.is_not(None),
+                )
+            )
             .where(Position.is_active.is_(True))
             .where((Position.deadline.is_(None)) | (Position.deadline >= today))
             .order_by(Position.id)
         )
         if operation == "evidence":
-            stmt = stmt.where(Position.review_state != "fetch_unavailable")
+            stmt = stmt.where(
+                or_(
+                    Position.review_state != "fetch_unavailable",
+                    Position.detail_refresh_requested_at.is_not(None),
+                )
+            )
         if cohort_scoped:
             stmt = stmt.where(
                 or_(
@@ -1012,7 +1079,12 @@ async def _run_details(
                 if decision.status != "eligible":
                     position.indexed_at = None
             legacy_revalidation = operation == "evidence" and _needs_legacy_revalidation_evidence(position)
-            if decision.status == target_status or legacy_revalidation:
+            refresh_requested = position.detail_refresh_requested_at is not None
+            requested_for_stage = refresh_requested and (
+                (operation == "enrich" and decision.status == "eligible")
+                or (operation == "evidence" and decision.status != "eligible")
+            )
+            if decision.status == target_status or legacy_revalidation or requested_for_stage:
                 selected.append(position)
             if decision.status in status_counts:
                 status_counts[decision.status] += 1
@@ -1024,9 +1096,13 @@ async def _run_details(
         )
         selected.sort(
             key=lambda position: (
-                _detail_selection_priority(position, operation=operation)
+                (
+                    position.detail_refresh_requested_at is None,
+                    *_detail_selection_priority(position, operation=operation),
+                )
                 if not cohort_scoped
                 else (
+                    position.detail_refresh_requested_at is None,
                     position.id not in cohort_position_ids,
                     *_detail_selection_priority(position, operation=operation),
                 )
@@ -1190,6 +1266,8 @@ async def _run_details(
                     if promote_after_fetch:
                         position.screened_at = datetime.now(UTC).replace(tzinfo=None)
                     position.details_scraped_at = datetime.now(UTC).replace(tzinfo=None)
+                    position.detail_cleanup_version = DETAIL_CLEANUP_VERSION
+                    position.detail_refresh_requested_at = None
                     position.indexed_at = None
                     await session.commit()
                     enriched += 1
@@ -1389,6 +1467,8 @@ async def _run_details(
                         if promote_after_fetch:
                             position.screened_at = datetime.now(UTC).replace(tzinfo=None)
                         position.details_scraped_at = datetime.now(UTC).replace(tzinfo=None)
+                        position.detail_cleanup_version = DETAIL_CLEANUP_VERSION
+                        position.detail_refresh_requested_at = None
                         position.indexed_at = None
                 except Exception as exc:
                     print(f"{operation} parse failed for {position_url}: {exc}")

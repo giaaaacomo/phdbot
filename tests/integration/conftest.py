@@ -15,7 +15,13 @@ COMPOSE_CMD = ["docker", "compose", "-f", "docker-compose.yaml", "-p", "phd-sear
 SERVICE_NAME = "api"
 LOG_FILE = str(Path(__file__).resolve().parent / "integration.log")
 # ponytail: host ports offset by +10 so the test stack coexists with a running dev stack
-COMPOSE_ENV = {**os.environ, "API_HOST_PORT": "8013", "POSTGRES_HOST_PORT": "5443", "QDRANT_HOST_PORT": "6343"}
+COMPOSE_ENV = {
+    **os.environ,
+    "API_HOST_PORT": "8013",
+    "POSTGRES_HOST_PORT": "5443",
+    "QDRANT_HOST_PORT": "6343",
+    "OLLAMA_HOST_PORT": "11534",
+}
 API_URL = os.environ.get("PHD_SEARCHER_URL", "http://localhost:8013")
 
 
@@ -83,11 +89,12 @@ VALUES (
     (SELECT id FROM universities WHERE wikidata_id = 'Q999999'),
     'https://test.example/vacancies', 'university', 'funnel', 'ok'
 );
-INSERT INTO positions (university_id, listing_page_id, url, title, description, deadline)
+INSERT INTO positions (university_id, listing_page_id, url, title, description, full_description, deadline)
 VALUES (
     (SELECT id FROM universities WHERE wikidata_id = 'Q999999'),
     (SELECT id FROM listing_pages WHERE url = 'https://test.example/vacancies'),
-    'https://test.example/jobs/1', 'PhD in Testing', 'A test position.', '2099-01-01'
+    'https://test.example/jobs/1', 'PhD in Testing', 'A test position.',
+    'Skip to content ![logo](https://test.example/logo.png) Vacancy details', '2099-01-01'
 );
 """
 

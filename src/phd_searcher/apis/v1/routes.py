@@ -20,6 +20,7 @@ from phd_searcher.typedef.pipeline import PipelineStartBody, PipelineStatus
 from phd_searcher.typedef.schedule import ScheduleCreate, ScheduleView
 from phd_searcher.typedef.search import (
     CoverageResult,
+    DetailRefreshStatus,
     ExportBody,
     PositionLookup,
     ReviewAttemptItem,
@@ -139,6 +140,17 @@ async def cancel_schedule(job_id: int, service: ScheduleSvc) -> ScheduleView:
 @router.get("/positions/{position_id}")
 async def position(position_id: int, service: CatalogSvc) -> PositionLookup:
     return await service.position(position_id)
+
+
+@router.post("/positions/{position_id}/detail-refresh")
+async def request_position_detail_refresh(
+    position_id: int,
+    service: CatalogSvc,
+) -> DetailRefreshStatus:
+    result = await service.request_detail_refresh(position_id)
+    if not result.found:
+        raise HTTPException(status_code=404, detail="position not found")
+    return result
 
 
 @router.post("/positions/{position_id}/feedback", status_code=201)

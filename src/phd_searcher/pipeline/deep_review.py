@@ -23,6 +23,7 @@ from phd_searcher.config import Settings
 from phd_searcher.database.models.position import Position
 from phd_searcher.database.models.review_attempt import ReviewAttempt
 from phd_searcher.database.models.university import University
+from phd_searcher.detail_cleanup import DETAIL_CLEANUP_VERSION
 from phd_searcher.opportunity_kinds import OPPORTUNITY_KINDS, OpportunityKind
 from phd_searcher.pipeline.normalize import extract_deadline
 from phd_searcher.pipeline.progress import Progress
@@ -1369,6 +1370,27 @@ def _deep_review_candidate_filter(today: date) -> ColumnElement[bool]:
     )
 
 
+def _review_priority_expression() -> ColumnElement[int]:
+    """Spend bounded review compute first where fresh evidence can resolve it."""
+    return case(
+        (
+            and_(
+                Position.review_state == "ready_deep_review",
+                Position.detail_cleanup_version == DETAIL_CLEANUP_VERSION,
+            ),
+            -1,
+        ),
+        (Position.screening_version.in_(("evidence-v10", "evidence-v11")), 0),
+        (Position.screening_status.in_(("eligible", "rejected")), 1),
+        (Position.review_state == "grounding_failure", 2),
+        (Position.review_state == "tool_error", 3),
+        (Position.review_state == "ready_deep_review", 4),
+        (Position.review_state == "human_review", 5),
+        (Position.review_state == "source_unusable", 7),
+        else_=6,
+    )
+
+
 async def run(
     container: Injector,
     *,
@@ -1432,19 +1454,7 @@ async def run(
                 conflicted_fingerprints.add(fingerprint)
             elif fingerprint not in conflicted_fingerprints:
                 verdict_cache[fingerprint] = cached
-        review_priority = case(
-            (Position.screening_version.in_(("evidence-v10", "evidence-v11")), 0),
-            (Position.screening_status.in_(("eligible", "rejected")), 1),
-            (Position.review_state == "grounding_failure", 2),
-            (Position.review_state == "tool_error", 3),
-            # Freshly fetched, attributable detail pages are the highest-yield
-            # new work.  Keep them ahead of known-unusable sources so a bounded
-            # overnight run spends its GPU budget on resolvable candidates.
-            (Position.review_state == "ready_deep_review", 4),
-            (Position.review_state == "human_review", 5),
-            (Position.review_state == "source_unusable", 7),
-            else_=6,
-        )
+        review_priority = _review_priority_expression()
         stmt = (
             select(Position, University)
             .outerjoin(University, Position.university_id == University.id)

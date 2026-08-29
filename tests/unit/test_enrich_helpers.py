@@ -462,6 +462,32 @@ def test_evidence_fetch_preserves_public_legacy_verdict_until_deep_review():
     assert position.routing_reason == "evidence:detail_page"
 
 
+def test_evidence_fetch_routes_pending_row_to_deep_review():
+    position = SimpleNamespace(
+        screening_status="pending",
+        screening_manual=False,
+        position_type="other",
+        review_state="untriaged",
+        routing_reason=None,
+    )
+
+    _apply_detail_screening(
+        SimpleNamespace(),
+        position,
+        full_description="Interaction designer vacancy. Applications are open.",
+        classified="other",
+        promote_after_fetch=False,
+        pipeline_run_id=48,
+        evidence_route="evidence:detail_page",
+    )
+
+    assert position.screening_status == "review"
+    assert position.screening_source == "router"
+    assert position.screening_decision == "review"
+    assert position.screening_reason == "evidence_ready"
+    assert position.review_state == "ready_deep_review"
+
+
 def test_short_inline_fragment_is_not_treated_as_new_review_evidence():
     assert not _has_sufficient_inline_evidence("PhD position — apply now")
     assert _has_sufficient_inline_evidence("word " * 50)

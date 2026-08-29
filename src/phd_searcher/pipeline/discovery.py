@@ -26,6 +26,7 @@ from phd_searcher.database.models.university import University
 from phd_searcher.engine.model_helper import ModelHelper
 from phd_searcher.engine.prompt_helper import render_prompt
 from phd_searcher.engine.search_helper import search_listing_candidates
+from phd_searcher.pipeline.curated_sources import seed_curated_sources
 from phd_searcher.pipeline.progress import Progress
 from phd_searcher.pipeline.retry import retry_async
 from phd_searcher.pipeline.urls import is_listing_page_url
@@ -282,6 +283,12 @@ async def run(
                     break
                 was_done = uni.discovery_status == "done"
                 try:
+                    # Some institutions expose an official central portal that
+                    # generic ranking can miss among many departmental pages.
+                    # The audited registry complements rather than replaces
+                    # normal discovery and carries a validated deterministic schema.
+                    await seed_curated_sources(session, uni)
+
                     async def crawl_root(website_url: str = uni.website_url) -> CrawlResult:
                         result = await crawler.arun(website_url, config=crawl_config)
                         if not result.success:

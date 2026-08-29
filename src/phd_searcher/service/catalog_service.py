@@ -17,11 +17,13 @@ from phd_searcher.database.models.listing_page import ListingPage
 from phd_searcher.database.models.position import Position
 from phd_searcher.database.models.review_attempt import ReviewAttempt
 from phd_searcher.database.models.university import University
+from phd_searcher.detail_cleanup import detail_refresh_needed
 from phd_searcher.opportunity_kinds import normalize_opportunity_kind
 from phd_searcher.pipeline.review_audit import append_review_attempt
 from phd_searcher.position_types import POSITION_TYPES, classify_position
 from phd_searcher.typedef.search import (
     CoverageResult,
+    DetailRefreshStatus,
     PositionDetail,
     PositionLookup,
     ReviewAttemptItem,
@@ -88,6 +90,10 @@ class CatalogService:
             if row is None:
                 return PositionLookup(found=False)
             p, u = row
+            cleanup_needed = detail_refresh_needed(
+                p.full_description,
+                p.detail_cleanup_version,
+            )
             return PositionLookup(
                 found=True,
                 position=PositionDetail(
@@ -112,7 +118,29 @@ class CatalogService:
                     opportunity_kind=normalize_opportunity_kind(p.opportunity_kind),
                     university=u.name if u else (p.institution_name or ""),
                     country=u.country if u else (p.institution_country or ""),
+                    detail_cleanup_needed=cleanup_needed,
+                    detail_refresh_queued=p.detail_refresh_requested_at is not None,
                 ),
+            )
+
+    async def request_detail_refresh(self, position_id: int) -> DetailRefreshStatus:
+        """Queue one idempotent, non-destructive cleanup refetch."""
+
+        async with self._session_maker() as session:
+            position = await session.get(Position, position_id)
+            if position is None:
+                return DetailRefreshStatus(found=False)
+            cleanup_needed = detail_refresh_needed(
+                position.full_description,
+                position.detail_cleanup_version,
+            )
+            if cleanup_needed and position.detail_refresh_requested_at is None:
+                position.detail_refresh_requested_at = datetime.now(UTC).replace(tzinfo=None)
+                await session.commit()
+            return DetailRefreshStatus(
+                found=True,
+                cleanup_needed=cleanup_needed,
+                queued=cleanup_needed and position.detail_refresh_requested_at is not None,
             )
 
     async def screening(

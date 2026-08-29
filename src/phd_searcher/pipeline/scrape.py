@@ -287,6 +287,12 @@ async def _upsert_items(
                 "position_type": effective_position_type,
                 "full_description": case((detail_change, None), else_=Position.full_description),
                 "details_scraped_at": case((detail_change, None), else_=Position.details_scraped_at),
+                "detail_refresh_requested_at": case(
+                    (detail_change, None), else_=Position.detail_refresh_requested_at
+                ),
+                "detail_cleanup_version": case(
+                    (detail_change, None), else_=Position.detail_cleanup_version
+                ),
                 "screening_status": case((auto_rescreen, "pending"), else_=Position.screening_status),
                 "screening_reason": case((auto_rescreen, None), else_=Position.screening_reason),
                 "screening_source": case((auto_rescreen, "rules"), else_=Position.screening_source),
@@ -353,6 +359,8 @@ async def _upgrade_synthetic_position_urls(
                 url=direct,
                 full_description=None,
                 details_scraped_at=None,
+                detail_refresh_requested_at=None,
+                detail_cleanup_version=None,
                 screening_status=case(
                     (Position.screening_manual.is_(False), "pending"),
                     else_=Position.screening_status,

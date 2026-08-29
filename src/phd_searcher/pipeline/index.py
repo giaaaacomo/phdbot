@@ -367,6 +367,24 @@ def _has_acceptable_provisional_source(
     )
 
 
+def _is_audited_curated_portal(listing_page: ListingPage | None) -> bool:
+    """Recognize institution-owned sources whose item selector was curated.
+
+    ``seed`` is also used by the global EURAXESS sources; requiring a concrete
+    university keeps this exception limited to audited institution portals.
+    Their cards establish that an item is an advertised opportunity, but they
+    do not fabricate missing detail or current-open evidence.
+    """
+
+    return bool(
+        listing_page is not None
+        and getattr(listing_page, "source", None) == "seed"
+        and getattr(listing_page, "university_id", None) is not None
+        and getattr(listing_page, "schema_status", None) == "ok"
+        and getattr(listing_page, "quality_status", None) == "healthy"
+    )
+
+
 def _provisional_assessment(
     position: Position,
     *,
@@ -443,6 +461,27 @@ def _provisional_assessment(
         evidence_quotes,
         today=current_day,
     )
+
+    # An audited official portal extracts only individual vacancy cards.  A
+    # generic title such as "Interaction Designer" therefore remains a useful
+    # lead even when the local reviewer fails to call its tools.  Keep the
+    # verdict provisional and expose exactly which facts are still missing.
+    # Normal discovered portals do not receive this exception, so shared-page
+    # headings and navigation noise remain excluded by the existing guards.
+    if _is_audited_curated_portal(listing_page):
+        if (
+            getattr(position, "full_description", None)
+            and triage_evidence_supports(
+                evidence_quotes,
+                decision="eligible",
+                position_type=position_type,
+            )
+        ):
+            return _OPEN_STATUS_UNVERIFIED_UNCERTAINTY, ("open_status",)
+        return _TITLE_ONLY_CANDIDATE_UNCERTAINTY, (
+            "open_status",
+            "details",
+        )
 
     # A future deadline plus a rendered Apply link cannot override an explicit
     # CLOSED/EXPIRED status.  Keep the role searchable only as a clearly

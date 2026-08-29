@@ -37,6 +37,7 @@ from phd_searcher.pipeline.deep_review import (
     _result_version,
     _reuse_cached_result,
     _review_fingerprint,
+    _review_priority_expression,
     _review_state,
     _tool_failure,
     _validated_decision,
@@ -61,6 +62,18 @@ def test_deep_review_candidate_filter_excludes_expired_review_rows() -> None:
 
     # Currentness is enforced in all three status branches, including review.
     assert sql.count("positions.deadline >= '2026-08-09'") == 3
+
+
+def test_fresh_attributable_details_have_first_deep_review_priority() -> None:
+    sql = str(
+        _review_priority_expression().compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+
+    assert "positions.detail_cleanup_version = 'attributable-v1'" in sql
+    assert "THEN -1" in sql
 
 
 def _call(arguments):
