@@ -41,6 +41,7 @@
     border-bottom: 1px solid transparent; backdrop-filter: blur(10px); }
   nav button { background: none; border: none; border-bottom: 2px solid transparent; padding: 8px 14px; cursor: pointer; color: var(--muted); font-size: 14px; }
   nav button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  #tab-macros { margin-left: auto; }
   main { padding: 20px; width: 100%; max-width: 3440px; margin: 0 auto; }
   .tab { display: none; } .tab.active { display: block; }
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
@@ -113,8 +114,8 @@
   a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
   .table-wrap { overflow-x: auto; }
   .hit { border-bottom: 1px solid var(--border); padding: 12px 0; }
-  #review-items, #s-results, #s-institutions, #macro-list { width: 100%; max-width: 100ch; margin-inline: auto; }
-  #review-items .hit, #s-results .hit, #s-institutions .hit, #macro-list .hit { min-width: 0; overflow-wrap: anywhere; }
+  #review-items, #s-results, #s-institutions, #saved-items, #macro-list { width: 100%; max-width: 100ch; margin-inline: auto; }
+  #review-items .hit, #s-results .hit, #s-institutions .hit, #saved-items .hit, #macro-list .hit { min-width: 0; overflow-wrap: anywhere; }
   .numbered-hit { display: grid; grid-template-columns: 5.5ch minmax(0, 1fr); column-gap: 10px; height: 100%; }
   .numbered-hit > .hit-content { min-width: 0; display: flex; flex-direction: column; }
   .search-result { padding-inline: 10px; border-radius: 7px; transition: background-color .15s, box-shadow .15s; }
@@ -147,6 +148,13 @@
     color: var(--muted); font-size: 12px; font-weight: 600; }
   .hit .meta { color: var(--muted); font-size: 12px; }
   .score { float: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .hit-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: start; }
+  .hit-heading .score { float: none; }
+  .hit-tools { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; white-space: nowrap; }
+  button.save-result { min-width: 7.5em; padding: 5px 10px; }
+  button.save-result[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .new-badge { display: inline-block; padding: 1px 7px; border: 1px solid currentColor; border-radius: 12px;
+    color: var(--ok); font-size: 11px; font-weight: 750; white-space: nowrap; }
   .detail { margin: 8px 0 0 36px; padding: 12px; background: var(--bg); border: 1px solid var(--border);
     border-radius: 8px; white-space: pre-wrap; font-size: 13px; max-height: 300px; overflow-y: auto; }
   .numbered-hit .detail { margin-left: 0; }
@@ -175,6 +183,22 @@
   .check-menu label { display: flex; flex-direction: row; align-items: center; padding: 5px 7px; white-space: nowrap; color: var(--text); }
   .check-menu label:hover { background: var(--bg); border-radius: 5px; }
   .err-msg { color: var(--err); font-size: 13px; }
+  .saved-calendar { margin: 12px 0 16px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); }
+  .saved-calendar > summary { cursor: pointer; padding: 11px 13px; color: var(--muted); font-weight: 650; }
+  .saved-calendar-body { padding: 0 12px 12px; }
+  .calendar-toolbar { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 10px; }
+  .calendar-toolbar strong { min-width: 16ch; text-align: center; }
+  .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .calendar-weekday { padding: 6px; background: var(--card); color: var(--muted); font-size: 11px; font-weight: 650; text-align: center; text-transform: uppercase; }
+  .calendar-day { min-height: 92px; padding: 6px; border-top: 1px solid var(--border); border-right: 1px solid var(--border); overflow: hidden; }
+  .calendar-day:nth-child(7n) { border-right: 0; }
+  .calendar-day.outside { color: var(--muted); background: color-mix(in srgb, var(--bg) 72%, transparent); }
+  .calendar-day.today .calendar-date { color: var(--accent); font-weight: 750; }
+  .calendar-date { display: block; margin-bottom: 4px; font-size: 11px; }
+  .calendar-event { display: block; margin: 3px 0; padding: 2px 4px; border-radius: 4px; background: color-mix(in srgb, var(--accent) 13%, transparent);
+    color: var(--text); font-size: 10px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .calendar-more { color: var(--muted); font-size: 10px; }
+  .saved-empty { padding: 28px 12px; text-align: center; color: var(--muted); }
   .muted { color: var(--muted); }
   .screen-badge { display:inline-block; border-radius:12px; padding:1px 8px; font-size:11px; font-weight:600; color:var(--status-fg); }
   .screen-badge.pending { background:var(--muted); }
@@ -201,6 +225,11 @@
     .filter-grid .wide, .search-grid .wide { grid-column: span 1; }
     .control-actions button { flex: 1 1 42%; }
     .report-form { grid-template-columns: 1fr; }
+    .hit-heading { grid-template-columns: 1fr; }
+    .hit-tools { justify-content: space-between; }
+    .calendar-day { min-height: 58px; padding: 3px; }
+    .calendar-event { width: 8px; height: 8px; padding: 0; border-radius: 50%; color: transparent; }
+    #tab-macros { margin-left: 0; }
   }
   @media (min-width: 900px) {
     #cov-tiles { grid-template-columns: repeat(6, minmax(0, 240px)); }
@@ -227,7 +256,7 @@
     #pipeline .control-layout { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     #pipeline .control-layout .control-group:first-child { grid-column: 1 / -1; }
     #pipeline .control-actions { grid-column: 1 / -1; }
-    #review-items, #s-results, #s-institutions, #macro-list {
+    #review-items, #s-results, #s-institutions, #saved-items, #macro-list {
       max-width: 204ch; display: grid; grid-template-columns: repeat(2, minmax(0, 100ch));
       justify-content: center; column-gap: 28px; align-items: stretch;
     }
@@ -246,6 +275,7 @@
   <button id="tab-coverage" role="tab" aria-controls="coverage" aria-selected="false" tabindex="-1" data-tab="coverage" title="Inspect institution and source coverage">Coverage</button>
   <button id="tab-review" role="tab" aria-controls="review" aria-selected="false" tabindex="-1" data-tab="review" title="Inspect or decide candidates that need human attention">Review</button>
   <button id="tab-search" role="tab" aria-controls="search" aria-selected="false" tabindex="-1" data-tab="search" title="Search indexed opportunities by meaning and structured filters">Search</button>
+  <button id="tab-saved" role="tab" aria-controls="saved" aria-selected="false" tabindex="-1" data-tab="saved" title="Review and organize opportunities saved in this browser">Saved <span id="saved-nav-count" aria-label="saved opportunities"></span></button>
   <button id="tab-macros" role="tab" aria-controls="macros" aria-selected="false" tabindex="-1" data-tab="macros" title="Save repeatable refresh, search and export workflows">Macros</button>
 </nav>
 <main>
@@ -314,7 +344,7 @@
   <section id="coverage" class="tab" role="tabpanel" aria-labelledby="tab-coverage" hidden>
     <div class="tiles" id="cov-tiles"></div>
     <div class="card">
-      <h2>Universities</h2>
+      <h2>Institutions</h2>
       <div class="section-tools">
         <input id="cov-filter" type="search" title="Filter by institution name, country code or full country name" placeholder="filter by name or country…">
         <span id="cov-count" class="muted result-count" aria-live="polite"></span>
@@ -324,12 +354,12 @@
           <thead><tr>
             <th class="row-number" title="Position in the current filtered and sorted list">#</th>
             <th aria-sort="ascending"><button class="table-sort active" data-cov-sort="country" data-label="Country">Country <span class="sort-indicator" aria-hidden="true">▲</span></button></th>
-            <th aria-sort="none"><button class="table-sort" data-cov-sort="university" data-label="University">University <span class="sort-indicator" aria-hidden="true">↕</span></button></th>
+            <th aria-sort="none"><button class="table-sort" data-cov-sort="university" data-label="Institution">Institution <span class="sort-indicator" aria-hidden="true">↕</span></button></th>
             <th aria-sort="none"><button class="table-sort" data-cov-sort="tier" data-label="Tier">Tier <span class="sort-indicator" aria-hidden="true">↕</span></button></th>
             <th aria-sort="none"><button class="table-sort" data-cov-sort="discovery" data-label="Discovery">Discovery <span class="sort-indicator" aria-hidden="true">↕</span></button></th>
             <th aria-sort="none"><button class="table-sort" data-cov-sort="pages" data-label="Pages OK/Total"><span>Pages<br>OK/Total</span> <span class="sort-indicator" aria-hidden="true">↕</span></button></th>
             <th aria-sort="none"><button class="table-sort" data-cov-sort="quarantine" data-label="Quarantine">Quarantine <span class="sort-indicator" aria-hidden="true">↕</span></button></th>
-            <th aria-sort="none"><button class="table-sort" data-cov-sort="positions" data-label="Positions">Positions <span class="sort-indicator" aria-hidden="true">↕</span></button></th>
+            <th aria-sort="none"><button class="table-sort" data-cov-sort="positions" data-label="Extracted, current and searchable positions"><span>Positions<br>extracted/current/searchable</span> <span class="sort-indicator" aria-hidden="true">↕</span></button></th>
             <th></th>
           </tr></thead>
           <tbody id="cov-body"></tbody>
@@ -439,6 +469,58 @@
       </div>
       <div id="s-results"></div>
     </div>
+  </section>
+
+  <!-- SAVED -->
+  <section id="saved" class="tab" role="tabpanel" aria-labelledby="tab-saved" hidden>
+    <div class="card">
+      <h2>Saved opportunities</h2>
+      <p class="muted">Saved on this browser. Filters affect both the deadline calendar and the list below.</p>
+      <div class="filter-layout">
+        <div class="filter-section">
+          <h3>Where and what</h3>
+          <div class="filter-grid">
+            <label class="wide">Title or institution <input id="saved-query" type="search" placeholder="filter saved opportunities"></label>
+            <label>Country <select id="saved-country"><option value="">All countries</option></select></label>
+            <label>Position type <select id="saved-type"><option value="">All position types</option></select></label>
+          </div>
+        </div>
+        <div class="filter-section">
+          <h3>Deadline and compensation</h3>
+          <div class="filter-grid">
+            <label>Deadline from <input id="saved-deadline-from" type="date"></label>
+            <label>Deadline to <input id="saved-deadline-to" type="date"></label>
+            <label title="Unknown pay is retained after known matches">Minimum pay (€ equiv.) <input id="saved-comp-min" type="number" min="0" step="any" placeholder="any"></label>
+          </div>
+        </div>
+        <div class="filter-section">
+          <h3>Result order</h3>
+          <div class="filter-grid">
+            <label>Order by <select id="saved-sort"><option value="saved">date saved</option><option value="deadline">deadline</option><option value="compensation">compensation</option><option value="posted">publication date</option><option value="relevance">last relevance score</option><option value="country">country</option></select></label>
+            <label>Direction <select id="saved-order"><option value="desc">descending</option><option value="asc">ascending</option></select></label>
+            <label><span><input id="saved-show-unknown-pay" type="checkbox" checked> keep unknown pay</span></label>
+            <label><span><input id="saved-show-reported" type="checkbox"> show reported items</span></label>
+          </div>
+        </div>
+      </div>
+      <div class="controls" style="margin-top:10px">
+        <button class="act ghost" id="btn-saved-reset">Reset filters</button>
+        <span id="saved-count" class="muted result-count" role="status" aria-live="polite"></span>
+      </div>
+      <details id="saved-calendar" class="saved-calendar" open>
+        <summary>Deadline calendar <span id="saved-calendar-summary" class="muted"></span></summary>
+        <div class="saved-calendar-body">
+          <div class="calendar-toolbar">
+            <button class="act ghost" id="saved-calendar-prev" aria-label="Previous month">←</button>
+            <button class="act ghost" id="saved-calendar-today">Today</button>
+            <strong id="saved-calendar-month" aria-live="polite"></strong>
+            <button class="act ghost" id="saved-calendar-next" aria-label="Next month">→</button>
+          </div>
+          <div id="saved-calendar-grid" class="calendar-grid" role="grid" aria-label="Saved opportunity deadlines"></div>
+        </div>
+      </details>
+    </div>
+    <div class="card"><div id="saved-items" aria-live="polite"></div></div>
   </section>
 
   <!-- MACROS -->
@@ -575,6 +657,7 @@ function activateTab(name, {focus = false, remember = true} = {}) {
   if (selected.dataset.tab === "coverage") loadCoverage();
   if (selected.dataset.tab === "review") loadReview(false);
   if (selected.dataset.tab === "search") { loadSearchFacets(); renderSearchHistory(); }
+  if (selected.dataset.tab === "saved") renderSaved();
   if (selected.dataset.tab === "macros") loadMacros();
 }
 tabButtons.forEach((button, index) => {
@@ -625,6 +708,7 @@ function renderStatus(st) {
     : queue.retry_in_seconds != null && queue.retry_in_seconds > 0
       ? `cooldown · next retry in ${fmtSecs(queue.retry_in_seconds)} (${fmtDate(queue.cooldown_until)})`
       : "retrying now";
+  const queueAttemptLabel = queue?.source === "listing sources" ? "retry round" : "429 streak";
   $("#pstatus").innerHTML = `
     <div class="row"><span class="badge ${esc(st.state)}">${esc(st.state)}</span>
       ${st.run_id != null ? `<span class="muted">run #${st.run_id}</span>` : ""}</div>
@@ -641,7 +725,7 @@ function renderStatus(st) {
         <div class="progress" role="progressbar" aria-label="Deferred queue progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${queuePct}"><div style="width:${queuePct}%"></div></div>
         <div class="row"><b>source</b> ${esc(queue.source)}
           <b>status</b> ${esc(queueState)}
-          <b>429 streak</b> ${queue.rate_limit_streak}</div>
+          <b>${queueAttemptLabel}</b> ${queue.rate_limit_streak}</div>
       </div>` : ""}` : ""}
     <div class="row"><b title="Stages already completed in this run">done</b> ${Object.entries(st.stages_done).map(([k,v]) => `${esc(stageLabel(k))}:${v}`).join(", ") || "—"}</div>
     <div class="row"><b title="Stages still to be run, including the current stage">pending</b> ${st.stages_pending.map(s => esc(stageLabel(s))).join(", ") || "—"}</div>
@@ -801,7 +885,11 @@ const covSortValue = (university, key) => {
     return [total ? ok / total : -1, ok, total];
   }
   if (key === "quarantine") return [Number(university.positions_quarantined) || 0, Number(university.listing_pages_quarantined) || 0];
-  if (key === "positions") return Number(university.positions_count) || 0;
+  if (key === "positions") return [
+    Number(university.positions_searchable) || 0,
+    Number(university.positions_current) || 0,
+    Number(university.positions_count) || 0,
+  ];
   return "";
 };
 const compareCovValues = (left, right) => {
@@ -835,11 +923,14 @@ async function loadCoverage() {
     if (token !== coverageLoadToken) return;
     covData = data;
     const sum = k => covData.reduce((a, u) => a + u[k], 0);
-    const withPos = covData.filter(u => u.positions_count > 0).length;
+    const withPos = covData.filter(u => u.positions_searchable > 0).length;
     const specialists = covData.filter(u => u.catalog_tier === "specialist").length;
+    const research = covData.filter(u => u.catalog_tier === "research").length;
     $("#cov-tiles").innerHTML = [
-      ["Institutions", covData.length], ["Specialist", specialists], ["With positions", withPos],
-      ["Positions", sum("positions_count")],
+      ["Institutions", covData.length], ["Specialist", specialists], ["Research", research],
+      ["With searchable positions", withPos],
+      ["Extracted active", sum("positions_count")],
+      ["Current", sum("positions_current")], ["Searchable", sum("positions_searchable")],
       ["Quarantined", sum("positions_quarantined")],
       ["Listing pages", `${sum("listing_pages_ok")}/${sum("listing_pages_count")}`],
     ].map(([l, n]) => `<div class="tile"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
@@ -865,7 +956,7 @@ function renderCoverage() {
   updateCoverageSortHeaders();
   $("#cov-body").innerHTML = rows.map((u, index) => `<tr>
     <td class="row-number">${index + 1}.</td><td>${countryMark(u.country)}</td><td>${esc(u.name)}</td><td title="${esc(u.catalog_basis)}">${esc(u.catalog_tier)}</td><td>${esc(u.discovery_status)}</td>
-    <td>${u.listing_pages_ok}/${u.listing_pages_count}</td><td>${u.listing_pages_quarantined} pages · ${u.positions_quarantined} items</td><td>${u.positions_count}</td>
+    <td>${u.listing_pages_ok}/${u.listing_pages_count}</td><td>${u.listing_pages_quarantined} pages · ${u.positions_quarantined} items</td><td title="Extracted active / current by deadline / indexed and searchable">${u.positions_count} / ${u.positions_current} / ${u.positions_searchable}</td>
     <td><a href="${esc(u.website_url)}" target="_blank" rel="noopener">site ↗</a></td></tr>`).join("")
     || `<tr><td colspan="9" class="muted">no matches</td></tr>`;
 }
@@ -1134,6 +1225,8 @@ function persistReportedPositions() {
   try { localStorage.setItem(REPORTED_POSITIONS_KEY, JSON.stringify(reportedPositions)); } catch {}
 }
 function verificationBadge(hit) {
+  const report = reportedPosition(hit.position_id);
+  if (report) return `<span class="verification-badge reported" title="Reported by you; shown because reported items are enabled">Reported: ${esc(feedbackReasons[report.reason] || report.reason)}</span>`;
   const probable = hit.verification_status === "probable";
   const confidence = hit.confidence == null ? "" : ` · confidence ${Number(hit.confidence).toFixed(2)}`;
   const label = probable ? "Probable" : "Verified";
@@ -1163,6 +1256,212 @@ function pullProvenance(hit) {
   const title = `First pulled by PHDBOT: ${fmtDate(first)}; last confirmed on the source: ${fmtDate(last)}`;
   return `<span title="${esc(title)}">PHDBOT first pulled ${dateOnly(first)} · last checked ${dateOnly(last)}</span>`;
 }
+const NEW_OPPORTUNITY_DAYS = 7;
+function recentDate(value, days = NEW_OPPORTUNITY_DAYS) {
+  if (!value) return false;
+  const parsed = utcDate(String(value).length === 10 ? `${value}T00:00:00Z` : value);
+  if (!parsed || Number.isNaN(parsed.getTime())) return false;
+  const age = Date.now() - parsed.getTime();
+  return age >= -86400000 && age <= days * 86400000;
+}
+function newOpportunityBadge(hit) {
+  const reasons = [];
+  if (recentDate(hit.first_seen_at)) reasons.push(`first pulled by PHDBOT ${dateOnly(hit.first_seen_at)}`);
+  if (recentDate(hit.published_at)) reasons.push(`published ${dateOnly(hit.published_at)}`);
+  if (!reasons.length) return "";
+  return `<span class="new-badge" title="New means first discovered by PHDBOT and/or published within the last ${NEW_OPPORTUNITY_DAYS} days: ${esc(reasons.join("; "))}">New</span>`;
+}
+
+// Saved opportunities are deliberately browser-local: no account, migration or
+// private shortlist data leaves this device. A compact hit snapshot makes the
+// list useful across searches and browser restarts.
+const SAVED_POSITIONS_KEY = "phdbot.savedPositions.v1";
+let savedPositions = (() => {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SAVED_POSITIONS_KEY) || "{}");
+    return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+  } catch { return {}; }
+})();
+let savedCalendarCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+const savedPosition = id => savedPositions[String(id)] || null;
+const safeHref = value => {
+  try {
+    const url = new URL(String(value || ""), location.origin);
+    return /^(https?:)$/.test(url.protocol) ? url.href : "#";
+  } catch { return "#"; }
+};
+function updateSavedNavCount() {
+  const count = Object.keys(savedPositions).length;
+  const marker = $("#saved-nav-count");
+  if (marker) marker.textContent = count ? `(${count})` : "";
+}
+function persistSavedPositions() {
+  try {
+    localStorage.setItem(SAVED_POSITIONS_KEY, JSON.stringify(savedPositions));
+    updateSavedNavCount();
+    return true;
+  } catch { return false; }
+}
+function saveButton(hit, {removeLabel = "Unsave"} = {}) {
+  const saved = Boolean(savedPosition(hit.position_id));
+  const label = saved ? removeLabel : "Save";
+  const title = saved ? "Remove this opportunity from the browser-local saved list" : "Save this opportunity on this browser";
+  return `<button type="button" class="act ghost save-result" aria-pressed="${saved}" title="${title}" onclick="toggleSavedPosition(${Number(hit.position_id)});return false">${label}</button>`;
+}
+function toggleSavedPosition(id) {
+  const key = String(id);
+  const previous = savedPositions[key] || null;
+  if (previous) {
+    delete savedPositions[key];
+  } else {
+    const hit = lastSearchResult?.hits?.find(item => Number(item.position_id) === Number(id));
+    if (!hit) return;
+    savedPositions[key] = {savedAt:new Date().toISOString(), hit:{...hit}};
+  }
+  if (!persistSavedPositions()) {
+    if (previous) savedPositions[key] = previous;
+    else delete savedPositions[key];
+    updateSavedNavCount();
+    $("#s-msg").textContent = "Could not update saved opportunities: browser storage is unavailable or full.";
+    return;
+  }
+  if (lastSearchResult) renderSearchResult(lastSearchResult);
+  if ($("#saved").classList.contains("active")) renderSaved();
+}
+window.toggleSavedPosition = toggleSavedPosition;
+
+function savedFilterValue(id) { return $(id)?.value || ""; }
+function savedRecords() {
+  const text = savedFilterValue("#saved-query").trim().toLocaleLowerCase();
+  const country = savedFilterValue("#saved-country");
+  const type = savedFilterValue("#saved-type");
+  const deadlineFrom = savedFilterValue("#saved-deadline-from");
+  const deadlineTo = savedFilterValue("#saved-deadline-to");
+  const payValue = savedFilterValue("#saved-comp-min");
+  const minimumPay = payValue ? Number(payValue) : null;
+  const keepUnknownPay = $("#saved-show-unknown-pay")?.checked !== false;
+  const showReported = $("#saved-show-reported")?.checked === true;
+  const records = Object.values(savedPositions).filter(record => record && record.hit).filter(record => {
+    const hit = record.hit;
+    if (!showReported && reportedPosition(hit.position_id)) return false;
+    const haystack = `${hit.title || ""} ${hit.university || ""} ${hit.country || ""} ${positionTypeLabel(hit.position_type)}`.toLocaleLowerCase();
+    if (text && !haystack.includes(text)) return false;
+    if (country && hit.country !== country) return false;
+    if (type && hit.position_type !== type) return false;
+    if (deadlineFrom && hit.deadline && String(hit.deadline).slice(0, 10) < deadlineFrom) return false;
+    if (deadlineTo && hit.deadline && String(hit.deadline).slice(0, 10) > deadlineTo) return false;
+    if (minimumPay != null && hit.compensation_eur_max == null && !keepUnknownPay) return false;
+    if (minimumPay != null && hit.compensation_eur_max != null && Number(hit.compensation_eur_max) < minimumPay) return false;
+    return true;
+  });
+  const sort = savedFilterValue("#saved-sort") || "saved";
+  const direction = savedFilterValue("#saved-order") === "asc" ? 1 : -1;
+  const value = record => {
+    const hit = record.hit;
+    if (sort === "saved") return record.savedAt || null;
+    if (sort === "deadline") return hit.deadline || null;
+    if (sort === "compensation") return hit.compensation_eur_max ?? null;
+    if (sort === "posted") return hit.published_at || null;
+    if (sort === "relevance") return hit.score ?? null;
+    if (sort === "country") return hit.country || null;
+    return null;
+  };
+  records.sort((a, b) => {
+    if (minimumPay != null) {
+      const unknownPayOrder = Number(a.hit.compensation_eur_max == null) - Number(b.hit.compensation_eur_max == null);
+      if (unknownPayOrder) return unknownPayOrder;
+    }
+    const av = value(a); const bv = value(b);
+    if (av == null && bv == null) return String(b.savedAt || "").localeCompare(String(a.savedAt || ""));
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    const compared = typeof av === "number" && typeof bv === "number"
+      ? av - bv : String(av).localeCompare(String(bv), undefined, {numeric:true, sensitivity:"base"});
+    return compared * direction || String(b.savedAt || "").localeCompare(String(a.savedAt || ""));
+  });
+  return records;
+}
+function populateSavedFacets() {
+  const records = Object.values(savedPositions).filter(record => record?.hit);
+  const countrySelect = $("#saved-country"); const typeSelect = $("#saved-type");
+  const selectedCountry = countrySelect.value; const selectedType = typeSelect.value;
+  const countries = [...new Set(records.map(record => record.hit.country).filter(Boolean))].sort();
+  const types = [...new Set(records.map(record => record.hit.position_type).filter(Boolean))].sort((a, b) => positionTypeLabel(a).localeCompare(positionTypeLabel(b)));
+  countrySelect.innerHTML = `<option value="">All countries</option>${countries.map(code => `<option value="${esc(code)}">${flag(code)} ${esc(countryName(code))}</option>`).join("")}`;
+  typeSelect.innerHTML = `<option value="">All position types</option>${types.map(value => `<option value="${esc(value)}">${esc(positionTypeLabel(value))}</option>`).join("")}`;
+  if (countries.includes(selectedCountry)) countrySelect.value = selectedCountry;
+  if (types.includes(selectedType)) typeSelect.value = selectedType;
+}
+function localDateKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+function renderSavedCalendar(records) {
+  const withDeadlines = records.filter(record => record.hit.deadline);
+  const withoutDeadline = records.length - withDeadlines.length;
+  $("#saved-calendar-summary").textContent = `· ${withDeadlines.length} dated${withoutDeadline ? ` · ${withoutDeadline} without deadline` : ""}`;
+  $("#saved-calendar-month").textContent = savedCalendarCursor.toLocaleDateString(undefined, {month:"long", year:"numeric"});
+  const byDate = new Map();
+  withDeadlines.forEach(record => {
+    const key = String(record.hit.deadline).slice(0, 10);
+    if (!byDate.has(key)) byDate.set(key, []);
+    byDate.get(key).push(record);
+  });
+  const mondayOffset = (savedCalendarCursor.getDay() + 6) % 7;
+  const gridStart = new Date(savedCalendarCursor.getFullYear(), savedCalendarCursor.getMonth(), 1 - mondayOffset);
+  const weekdays = Array.from({length:7}, (_, index) => new Date(2024, 0, 1 + index).toLocaleDateString(undefined, {weekday:"short"}));
+  const cells = weekdays.map(day => `<div class="calendar-weekday" aria-hidden="true">${esc(day)}</div>`);
+  for (let index = 0; index < 42; index++) {
+    const date = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + index);
+    const key = localDateKey(date);
+    const events = byDate.get(key) || [];
+    const outside = date.getMonth() !== savedCalendarCursor.getMonth();
+    const today = key === localDateKey(new Date());
+    const links = events.slice(0, 3).map(record => {
+      const hit = record.hit;
+      return `<a class="calendar-event" href="${esc(safeHref(hit.url))}" target="_blank" rel="noopener" onclick="markResultViewed(${Number(hit.position_id)},'source')" title="${esc(hit.title)} · ${esc(hit.university || "—")}">${esc(hit.title)}</a>`;
+    }).join("");
+    cells.push(`<div class="calendar-day${outside ? " outside" : ""}${today ? " today" : ""}" data-date="${key}"><span class="calendar-date">${date.getDate()}</span>${links}${events.length > 3 ? `<span class="calendar-more">+${events.length - 3} more</span>` : ""}</div>`);
+  }
+  $("#saved-calendar-grid").innerHTML = cells.join("");
+}
+function renderSavedItem(record, index) {
+  const hit = record.hit;
+  const score = Number.isFinite(Number(hit.score)) ? Number(hit.score).toFixed(3) : "—";
+  return `<div class="hit numbered-hit search-result${resultViewClass(hit.position_id)}" data-position-id="${Number(hit.position_id)}">
+    <span class="hit-number">${index + 1}.</span>
+    <div class="hit-content">
+      <div class="hit-heading"><div>
+        <div class="hit-title"><a href="${esc(safeHref(hit.url))}" target="_blank" rel="noopener" onclick="markResultViewed(${Number(hit.position_id)},'source')">${esc(hit.title)}</a></div>
+        <div class="hit-badges">${newOpportunityBadge(hit)} ${verificationBadge(hit)} ${uncertaintyBadges(hit)} ${familySignalBadge(hit)} <span class="view-marker">${resultViewBadge(hit.position_id)}</span></div>
+      </div><div class="hit-tools"><span class="score" title="Relevance score from the search in which this item was saved">${score}</span>${saveButton(hit)}</div></div>
+      <div class="meta">${esc(hit.university)} · ${flag(hit.country)} ${esc(hit.country || "—")} · ${esc(positionTypeLabel(hit.position_type))}
+        · deadline ${dateOnly(hit.deadline)} · compensation ${esc(compensation(hit))} · published ${dateOnly(hit.published_at)}
+        · saved ${dateOnly(record.savedAt)} · <a href="#" id="saved-det-link-${Number(hit.position_id)}" onclick="showDetail(${Number(hit.position_id)},'saved-det');return false">show details</a></div>
+      <div class="detail" id="saved-det-${Number(hit.position_id)}" style="display:none"></div>
+    </div>
+  </div>`;
+}
+function renderSaved() {
+  populateSavedFacets();
+  const records = savedRecords();
+  const total = Object.keys(savedPositions).length;
+  $("#saved-count").textContent = `${records.length}${records.length !== total ? ` of ${total}` : ""} saved`;
+  renderSavedCalendar(records);
+  $("#saved-items").innerHTML = records.length ? records.map(renderSavedItem).join("")
+    : `<div class="saved-empty">${total ? "No saved opportunities match these filters." : "Save an opportunity from Search to build your shortlist."}</div>`;
+}
+const savedFilterIds = ["#saved-query", "#saved-country", "#saved-type", "#saved-deadline-from", "#saved-deadline-to", "#saved-comp-min", "#saved-sort", "#saved-order", "#saved-show-unknown-pay", "#saved-show-reported"];
+savedFilterIds.forEach(id => $(id).addEventListener(id === "#saved-query" || id === "#saved-comp-min" ? "input" : "change", renderSaved));
+$("#btn-saved-reset").onclick = () => {
+  ["#saved-query", "#saved-country", "#saved-type", "#saved-deadline-from", "#saved-deadline-to", "#saved-comp-min"].forEach(id => { $(id).value = ""; });
+  $("#saved-sort").value = "saved"; $("#saved-order").value = "desc"; $("#saved-show-unknown-pay").checked = true;
+  $("#saved-show-reported").checked = false;
+  renderSaved();
+};
+$("#saved-calendar-prev").onclick = () => { savedCalendarCursor = new Date(savedCalendarCursor.getFullYear(), savedCalendarCursor.getMonth() - 1, 1); renderSavedCalendar(savedRecords()); };
+$("#saved-calendar-next").onclick = () => { savedCalendarCursor = new Date(savedCalendarCursor.getFullYear(), savedCalendarCursor.getMonth() + 1, 1); renderSavedCalendar(savedRecords()); };
+$("#saved-calendar-today").onclick = () => { const now = new Date(); savedCalendarCursor = new Date(now.getFullYear(), now.getMonth(), 1); renderSavedCalendar(savedRecords()); };
+updateSavedNavCount();
 const checkedValues = selector => [...document.querySelectorAll(selector + ":checked")].map(input => input.value);
 function multiSummary(summaryId, values, emptyLabel) {
   $(summaryId).textContent = values.length ? (values.length <= 2 ? values.join(", ") : `${values.length} selected`) : emptyLabel;
@@ -1302,9 +1601,10 @@ function renderSearchResult(result) {
     return `${unknownGroup ? `<div class="result-group-label">Filter data unavailable — retained for manual inspection</div>` : ""}<div class="hit numbered-hit search-result${resultViewClass(h.position_id)}" data-position-id="${h.position_id}">
     <span class="hit-number">${i + 1}.</span>
     <div class="hit-content">
-      <div><span class="score">${h.score.toFixed(3)}</span>
+      <div class="hit-heading"><div>
         <div class="hit-title"><a href="${esc(h.url)}" target="_blank" rel="noopener" onclick="markResultViewed(${h.position_id},'source')">${esc(h.title)}</a></div>
-        <div class="hit-badges">${verificationBadge(h)} ${uncertaintyBadges(h)} ${familySignalBadge(h)} <span class="view-marker">${resultViewBadge(h.position_id)}</span></div></div>
+        <div class="hit-badges">${newOpportunityBadge(h)} ${verificationBadge(h)} ${uncertaintyBadges(h)} ${familySignalBadge(h)} <span class="view-marker">${resultViewBadge(h.position_id)}</span></div>
+      </div><div class="hit-tools"><span class="score" title="Semantic relevance score">${h.score.toFixed(3)}</span>${saveButton(h)}</div></div>
       <div class="meta">${esc(h.university)} · ${flag(h.country)} ${esc(h.country || "—")}
         · ${esc(positionTypeLabel(h.position_type))}
         · ${esc(opportunityKindLabel(h.opportunity_kind))}
@@ -1329,6 +1629,7 @@ async function submitPositionFeedback(id, forcedReason = null) {
     reportedPositions[String(id)] = {feedbackId:feedback.id, reason:feedback.reason, at:feedback.created_at};
     persistReportedPositions();
     if (lastSearchResult) renderSearchResult(lastSearchResult);
+    if ($("#saved").classList.contains("active")) renderSaved();
     $("#s-msg").innerHTML = reason === "confirmed_opportunity"
       ? `Confirmation saved as auditable operator feedback. <button class="act ghost" onclick="undoPositionFeedback(${Number(id)})">Undo</button>`
       : `Report saved and item hidden in this browser. <button class="act ghost" onclick="undoPositionFeedback(${Number(id)})">Undo</button>`;
@@ -1342,6 +1643,7 @@ async function undoPositionFeedback(id) {
     delete reportedPositions[String(id)];
     persistReportedPositions();
     if (lastSearchResult) renderSearchResult(lastSearchResult);
+    if ($("#saved").classList.contains("active")) renderSaved();
     $("#s-msg").textContent = "Report retracted; the item is visible again.";
   } catch (e) { $("#s-msg").textContent = e.message; }
 }
@@ -1403,9 +1705,10 @@ $("#btn-export").onclick = async () => {
     $("#s-msg").textContent = `exported ${filename}`;
   } catch (e) { $("#s-msg").textContent = e.message; }
 };
-async function showDetail(id) {
-  const el = $("#det-" + id);
-  const link = $("#det-link-" + id);
+async function showDetail(id, prefix = "det") {
+  const el = $(`#${prefix}-${id}`);
+  const link = $(`#${prefix}-link-${id}`);
+  if (!el) return;
   if (el.style.display === "block") { el.style.display = "none"; if (link) link.textContent = "show details"; return; }
   if (link) link.textContent = "hide details";
   el.style.display = "block"; el.textContent = "loading…";

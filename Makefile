@@ -1,7 +1,7 @@
 UV ?= $(if $(wildcard $(HOME)/.local/bin/uv),$(HOME)/.local/bin/uv,uv)
 PROJECT_DIR ?= $(CURDIR)
 
-.PHONY: help setup run stop test test-unit test-integration lint ruff mypy mypy-ci mypy-stop format lock sync migrate revision pipeline display-refresh-install display-refresh-status completion-install completion-status clean
+.PHONY: help setup run stop test test-unit test-integration lint ruff mypy mypy-ci mypy-stop format lock sync migrate revision pipeline audit-searchability display-refresh-install display-refresh-status completion-install completion-status clean
 
 ALEMBIC = $(UV) run alembic -c src/phd_searcher/database/alembic.ini
 
@@ -19,6 +19,7 @@ help:
 	@echo "  make migrate          - Apply DB migrations (alembic upgrade head)"
 	@echo "  make revision name=X  - Autogenerate a migration named X"
 	@echo "  make pipeline args=X  - Run a pipeline stage in the API container, e.g. args=\"discovery --limit 20\""
+	@echo "  make audit-searchability - Explain current records excluded from semantic search"
 	@echo "  make display-refresh-install - Lower the ultrawide refresh automatically during runs"
 	@echo "  make display-refresh-status  - Inspect the host display supervisor"
 	@echo "  make completion-install schedule=N - Guard a scheduled run and deploy/index on completion"
@@ -81,6 +82,9 @@ revision:
 pipeline:
 	@test -n "$(args)" || { echo "usage: make pipeline args=\"<stage> [--limit N] [--name X]\""; exit 1; }
 	docker compose run --rm api python -m phd_searcher.pipeline.cli $(args)
+
+audit-searchability:
+	docker compose run --rm api python -m phd_searcher.pipeline.audit_searchability
 
 display-refresh-install:
 	install -d -m 0755 "$(HOME)/.local/bin" "$(HOME)/.config/systemd/user"

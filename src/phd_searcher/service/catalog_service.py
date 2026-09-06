@@ -276,7 +276,11 @@ class CatalogService:
                 await session.execute(
                     select(Position, University)
                     .outerjoin(University, Position.university_id == University.id)
-                    .where(Position.indexed_at.is_not(None), Position.is_active.is_(True))
+                    .where(
+                        Position.indexed_at.is_not(None),
+                        Position.is_active.is_(True),
+                        or_(Position.deadline.is_(None), Position.deadline >= local_today()),
+                    )
                 )
             ).all()
         institutions = {
@@ -301,6 +305,15 @@ class CatalogService:
                 ListingPage.quality_status == "quarantine"
             )
             positions_count = func.count(func.distinct(Position.id)).filter(Position.is_active.is_(True))
+            current_filter = (
+                Position.is_active.is_(True),
+                or_(Position.deadline.is_(None), Position.deadline >= local_today()),
+            )
+            positions_current = func.count(func.distinct(Position.id)).filter(*current_filter)
+            positions_searchable = func.count(func.distinct(Position.id)).filter(
+                *current_filter,
+                Position.indexed_at.is_not(None),
+            )
             positions_quarantined = func.count(func.distinct(Position.id)).filter(
                 Position.is_active.is_(True),
                 Position.screening_status == "quarantine",
@@ -313,6 +326,8 @@ class CatalogService:
                         pages_ok,
                         pages_quarantined,
                         positions_count,
+                        positions_current,
+                        positions_searchable,
                         positions_quarantined,
                     )
                     .outerjoin(ListingPage, ListingPage.university_id == University.id)
@@ -334,8 +349,10 @@ class CatalogService:
                         listing_pages_ok=ok,
                         listing_pages_quarantined=pq,
                         positions_count=n,
+                        positions_current=current,
+                        positions_searchable=searchable,
                         positions_quarantined=nq,
                     )
-                    for u, pc, ok, pq, n, nq in rows
+                    for u, pc, ok, pq, n, current, searchable, nq in rows
                 ]
             )

@@ -81,8 +81,21 @@ def test_dashboard_source_contains_expected_controls():
     assert "coverageLoadToken" in dashboard
     assert "reviewLoadToken" in dashboard
     assert "Stop the current run safely" in dashboard
+    assert 'queue?.source === "listing sources" ? "retry round" : "429 streak"' in dashboard
     assert 'data-tab="review"' in dashboard
+    assert 'data-tab="saved"' in dashboard
     assert 'data-tab="macros"' in dashboard
+    assert '#tab-macros { margin-left: auto; }' in dashboard
+    assert 'SAVED_POSITIONS_KEY = "phdbot.savedPositions.v1"' in dashboard
+    assert 'id="saved-calendar" class="saved-calendar" open' in dashboard
+    assert 'id="saved-sort"' in dashboard
+    assert 'value="compensation"' in dashboard
+    assert 'aria-pressed="${saved}"' in dashboard
+    assert "toggleSavedPosition" in dashboard
+    assert 'if (selected.dataset.tab === "saved") renderSaved();' in dashboard
+    assert "newOpportunityBadge(h)" in dashboard
+    assert "NEW_OPPORTUNITY_DAYS = 7" in dashboard
+    assert "first discovered by PHDBOT and/or published" in dashboard
     assert "Refine automatic sample" in dashboard
     assert 'id="btn-export"' in dashboard
     assert "Save current search as macro" in dashboard

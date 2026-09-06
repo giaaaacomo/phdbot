@@ -694,6 +694,47 @@ def test_status_exposes_deferred_queue_and_suppresses_misleading_eta(
     assert queue.rate_limit_streak == 2
 
 
+def test_status_exposes_scrape_source_queue(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = datetime(2026, 9, 2, 12, 0)
+    monkeypatch.setattr(runner_mod, "_utcnow", lambda: now)
+
+    async def scenario() -> object:
+        runner = FakeRunner()
+        runner.rows[1] = FakeRow(
+            id=1,
+            state="running",
+            stages=["scrape"],
+            current_stage="scrape",
+            checkpoints={
+                "scrape": {
+                    "deferred_sources": {
+                        "12": {
+                            "attempts": 2,
+                            "retry_at": "2026-09-02T12:05:00+00:00",
+                        }
+                    },
+                    "deferred_total": 3,
+                    "deferred_processed": 2,
+                }
+            },
+        )
+        runner._lock_held = True
+        return await runner.status()
+
+    status = asyncio.run(scenario())
+    assert status.current_stage is not None
+    queue = status.current_stage.deferred_queue
+    assert queue is not None
+    assert (queue.source, queue.processed, queue.total, queue.remaining) == (
+        "listing sources",
+        2,
+        3,
+        1,
+    )
+    assert queue.retry_in_seconds == 300.0
+    assert queue.rate_limit_streak == 2
+
+
 def test_active_time_excludes_stopped_interval(monkeypatch: pytest.MonkeyPatch) -> None:
     base = datetime(2026, 7, 29, 10, 0)
     current = [base + timedelta(seconds=10)]

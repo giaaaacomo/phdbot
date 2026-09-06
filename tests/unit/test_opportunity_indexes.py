@@ -30,6 +30,7 @@ from phd_searcher.pipeline.index import (
     _family_payload,
     _invalidate_missing_collection,
     _positions_to_index_stmt,
+    _provisional_gate_decision,
     _remove_orphan_vectors,
     _sync_observation_payload,
     _sync_opportunity_kind_payload,
@@ -228,6 +229,10 @@ def test_provisional_gate_exposes_strong_title_as_labelled_high_recall_lead() ->
         60,
         ("open_status", "details"),
     )
+    assert _provisional_gate_decision(
+        position,
+        today=date(2026, 8, 9),
+    ).reason == "strong_role_title"
 
 
 def test_provisional_gate_keeps_conflicting_euraxess_status_as_uncertain_lead() -> None:
@@ -468,6 +473,107 @@ def test_global_seed_source_does_not_get_curated_institution_exception() -> None
     )
 
 
+def test_audited_euraxess_item_exposes_untriaged_card_as_labelled_lead() -> None:
+    position = _position(
+        35,
+        VACANCY,
+        listing_page_id=9,
+        screening_status="pending",
+        title="Agricultural Sciences",
+        url="https://euraxess.ec.europa.eu/jobs/459698",
+        description="Organisation Example University · Researcher profile R1",
+        position_type="other",
+    )
+    listing = ListingPage(
+        id=9,
+        university_id=None,
+        url=(
+            "https://euraxess.ec.europa.eu/jobs/search?"
+            "f%5B0%5D=job_research_profile%3A447"
+        ),
+        kind="aggregator",
+        source="seed",
+        schema_status="ok",
+        quality_status="healthy",
+    )
+
+    decision = _provisional_gate_decision(
+        position,
+        listing_page=listing,
+        today=date(2026, 8, 9),
+    )
+
+    assert decision.assessment == (60, ("open_status", "details"))
+    assert decision.reason == "official_aggregator_card_details_missing"
+
+
+@pytest.mark.parametrize(
+    ("item_url", "quality_status"),
+    [
+        ("https://euraxess.ec.europa.eu/jobs/search", "healthy"),
+        ("https://euraxess.ec.europa.eu/jobs/not-numeric", "healthy"),
+        ("https://euraxess.ec.europa.eu/jobs/459698", "degraded"),
+    ],
+)
+def test_euraxess_exception_requires_direct_item_and_healthy_audited_feed(
+    item_url: str,
+    quality_status: str,
+) -> None:
+    position = _position(
+        36,
+        VACANCY,
+        listing_page_id=9,
+        screening_status="pending",
+        title="Agricultural Sciences",
+        url=item_url,
+        description="Research topic",
+        position_type="other",
+    )
+    listing = ListingPage(
+        id=9,
+        university_id=None,
+        url="https://euraxess.ec.europa.eu/jobs/search",
+        kind="aggregator",
+        source="seed",
+        schema_status="ok",
+        quality_status=quality_status,
+    )
+
+    assert not is_provisional_eligible(
+        position,
+        listing_page=listing,
+        today=date(2026, 8, 9),
+    )
+
+
+def test_euraxess_exception_does_not_override_explicit_closure() -> None:
+    position = _position(
+        37,
+        VACANCY,
+        listing_page_id=9,
+        screening_status="pending",
+        title="Agricultural Sciences",
+        url="https://euraxess.ec.europa.eu/jobs/459698",
+        description="STATUS: CLOSED",
+        position_type="other",
+    )
+    listing = ListingPage(
+        id=9,
+        university_id=None,
+        url="https://euraxess.ec.europa.eu/jobs/search",
+        kind="aggregator",
+        source="seed",
+        schema_status="ok",
+        quality_status="healthy",
+    )
+
+    assert _provisional_gate_decision(
+        position,
+        listing_page=listing,
+        today=date(2026, 8, 9),
+    ).reason == "explicit_closure_or_nonopportunity"
+
+
 @pytest.mark.parametrize(
     ("position_id", "title", "deadline", "deadline_raw"),
     [
@@ -643,6 +749,11 @@ def test_provisional_gate_does_not_promote_portal_noise(position: Position) -> N
         listing_page=listing,
         today=date(2026, 8, 9),
     )
+    assert _provisional_gate_decision(
+        position,
+        listing_page=listing,
+        today=date(2026, 8, 9),
+    ).assessment is None
 
 
 @pytest.mark.parametrize("title", ["Administrative Vacancies", "Operational Vacancies"])

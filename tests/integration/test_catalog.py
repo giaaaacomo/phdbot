@@ -10,6 +10,8 @@ def test_universities_coverage(client, seeded):
     test_uni = next(u for u in unis if u["name"] == "Test University")
     assert test_uni["country"] == "IT"
     assert test_uni["positions_count"] == 1
+    assert test_uni["positions_current"] == 1
+    assert test_uni["positions_searchable"] == 0
 
 
 def test_position_detail(client, seeded):

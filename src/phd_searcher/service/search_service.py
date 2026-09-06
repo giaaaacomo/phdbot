@@ -26,6 +26,7 @@ from qdrant_client.models import (
     ScoredPoint,
 )
 
+from phd_searcher.clock import local_today
 from phd_searcher.config.qdrant import QdrantConfig
 from phd_searcher.engine.model_helper import ModelHelper
 from phd_searcher.engine.search_query import split_combined_query
@@ -185,6 +186,20 @@ class SearchService:
         vectors = await self._model.embed_queries(queries)
         must: list[Condition] = []
         must_not: list[Condition] = []
+        # The vector collection can lag behind a fresh deadline/index cleanup.
+        # Never expose an explicitly expired item; keep unknown deadlines as
+        # useful, visibly uncertain leads.
+        must.append(
+            _range_or_unknown(
+                FieldCondition(
+                    key="deadline_ts",
+                    range=DatetimeRange(
+                        gte=datetime.combine(local_today(), time.min, tzinfo=UTC),
+                    ),
+                ),
+                key="deadline_ts",
+            )
+        )
         if body.mode == "verified_only":
             # Verification is an explicit evidence claim. Missing legacy
             # metadata must never be silently promoted to verified.

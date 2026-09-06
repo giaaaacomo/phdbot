@@ -213,6 +213,44 @@ async def test_search_country_filter_excludes(container, qdrant):
     assert result.hits == []
 
 
+async def test_search_excludes_explicitly_expired_but_retains_unknown_deadlines(
+    container,
+    qdrant,
+):
+    await _seed(qdrant)
+    await qdrant.upsert(
+        "positions",
+        points=[
+            PointStruct(
+                id=2,
+                vector=[1.0, 0.0, 0.0, 0.0],
+                payload={
+                    **PAYLOAD,
+                    "title": "Expired PhD",
+                    "url": "https://example/expired",
+                    "deadline": "2020-01-01",
+                    "deadline_ts": "2020-01-01T00:00:00+00:00",
+                },
+            ),
+            PointStruct(
+                id=3,
+                vector=[1.0, 0.0, 0.0, 0.0],
+                payload={
+                    **PAYLOAD,
+                    "title": "PhD with unknown deadline",
+                    "url": "https://example/unknown",
+                    "deadline": None,
+                    "deadline_ts": None,
+                },
+            ),
+        ],
+    )
+
+    result = await container.get(SearchService).search(SearchBody(query="robotics"))
+
+    assert {hit.position_id for hit in result.hits} == {1, 3}
+
+
 async def test_search_country_filter_accepts_common_italy_aliases(container, qdrant):
     await _seed(qdrant)
     service = container.get(SearchService)

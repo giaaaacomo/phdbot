@@ -238,12 +238,14 @@ class UniversityCoverage(BaseModel):
     country: str
     website_url: str
     discovery_status: str
-    catalog_tier: Literal["core", "specialist"] = "core"
+    catalog_tier: Literal["core", "specialist", "research"] = "core"
     catalog_basis: str = "wikidata:Q3918"
     listing_pages_count: int
     listing_pages_ok: int
     listing_pages_quarantined: int = 0
     positions_count: int
+    positions_current: int = 0
+    positions_searchable: int = 0
     positions_quarantined: int = 0
 
 

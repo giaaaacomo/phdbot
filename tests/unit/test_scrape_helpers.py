@@ -14,9 +14,11 @@ from phd_searcher.pipeline.scrape import (
     _EURAXESS_PAGE_DELAY,
     _EURAXESS_RATE_LIMIT_COOLDOWN,
     _country_code,
+    _deferred_source_cursor,
     _is_permanent_source_denial,
     _page_budget,
     _position_values,
+    _restore_completed_deferred_sources,
     _upgrade_synthetic_position_urls,
     _upsert_items,
 )
@@ -103,6 +105,24 @@ def test_non_paginated_source_is_one_exhaustive_page():
 def test_euraxess_uses_conservative_rate_limits():
     assert _EURAXESS_PAGE_DELAY >= 5
     assert _EURAXESS_RATE_LIMIT_COOLDOWN >= 300
+
+
+def test_deferred_source_checkpoint_preserves_exact_failed_page_and_refresh() -> None:
+    started = "2026-09-02T12:00:00"
+    deferred = {"17": {"page": 159, "source_started_at": started}}
+
+    assert _deferred_source_cursor(deferred, 17) == (159, started)
+
+
+def test_legacy_completed_deferred_checkpoint_is_repaired() -> None:
+    deferred: dict[str, object] = {"17": {"page": 159}, "18": {"page": 3}}
+    completed = {17, 19}
+
+    restored = _restore_completed_deferred_sources(deferred, completed)
+
+    assert restored == 1
+    assert completed == {19}
+    assert deferred == {"17": {"page": 159}, "18": {"page": 3}}
 
 
 def test_position_observation_time_is_owned_only_by_the_scrape_stage():

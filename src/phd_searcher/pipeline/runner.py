@@ -95,11 +95,45 @@ def _checkpoint_datetime(value: object) -> datetime | None:
 
 def _deferred_queue(row: PipelineRun) -> DeferredQueueInfo | None:
     """Deriva lo stato della coda dal checkpoint, anche per run create da versioni precedenti."""
-    if row.current_stage not in {"evidence", "enrich"}:
+    if row.current_stage not in {"scrape", "evidence", "enrich"}:
         return None
     raw_checkpoint = row.checkpoints.get(row.current_stage, {})
     if not isinstance(raw_checkpoint, dict):
         return None
+    if row.current_stage == "scrape":
+        raw_sources = raw_checkpoint.get("deferred_sources", {})
+        sources = raw_sources if isinstance(raw_sources, dict) else {}
+        remaining = len(sources)
+        recorded_total = _checkpoint_int(raw_checkpoint.get("deferred_total"))
+        recorded_processed = _checkpoint_int(raw_checkpoint.get("deferred_processed"))
+        total = max(recorded_total, recorded_processed + remaining)
+        if total == 0:
+            return None
+        processed = min(total, max(recorded_processed, total - remaining))
+        entries = [value for value in sources.values() if isinstance(value, dict)]
+        retry_times = [
+            retry_at
+            for entry in entries
+            if (retry_at := _checkpoint_datetime(entry.get("retry_at"))) is not None
+        ]
+        cooldown_until = min(retry_times, default=None)
+        retry_in = (
+            max((cooldown_until - _utcnow().replace(tzinfo=UTC)).total_seconds(), 0.0)
+            if cooldown_until is not None
+            else None
+        )
+        return DeferredQueueInfo(
+            source="listing sources",
+            total=total,
+            processed=processed,
+            remaining=remaining,
+            cooldown_until=cooldown_until,
+            retry_in_seconds=retry_in,
+            rate_limit_streak=max(
+                (_checkpoint_int(entry.get("attempts")) for entry in entries),
+                default=0,
+            ),
+        )
     raw_details = raw_checkpoint.get("deferred_details", {})
     details = raw_details if isinstance(raw_details, dict) else {}
     remaining = len(details)

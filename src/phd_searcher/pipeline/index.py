@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from typing import Any, Literal, cast
 from urllib.parse import urlsplit
@@ -104,6 +105,7 @@ VerificationMetadata = tuple[
     int,
     tuple[UncertaintyFlag, ...],
 ]
+ProvisionalAssessment = tuple[int, tuple[UncertaintyFlag, ...]]
 FamilySignalPayload = tuple[str | None, int]
 # These are deliberately interpretable heuristic tiers, not probabilities.
 # They let the user trade precision for recall without changing the audited
@@ -128,6 +130,14 @@ _STATUS_CONFLICT_CANDIDATE_TYPES = _TITLE_ONLY_CANDIDATE_TYPES | {
     "research_fellowship"
 }
 _EURAXESS_HOST = "euraxess.ec.europa.eu"
+
+
+@dataclass(frozen=True, slots=True)
+class ProvisionalGateDecision:
+    """Auditable result of the deterministic provisional-search gate."""
+
+    assessment: ProvisionalAssessment | None
+    reason: str
 
 
 def _checkpoint_int(value: object) -> int:
@@ -385,13 +395,51 @@ def _is_audited_curated_portal(listing_page: ListingPage | None) -> bool:
     )
 
 
-def _provisional_assessment(
+def _is_audited_euraxess_item(
+    position: Position,
+    listing_page: ListingPage | None,
+) -> bool:
+    """Recognize a direct card from the healthy official EURAXESS feeds.
+
+    A global ``seed`` is not sufficient on its own: both the audited listing
+    metadata and the canonical numeric item URL are required. This keeps the
+    recall exception away from search pages, arbitrary links and unhealthy
+    extractions while letting an official card establish that the row is a
+    concrete advertised opportunity.
+    """
+
+    if not (
+        listing_page is not None
+        and getattr(listing_page, "kind", None) == "aggregator"
+        and getattr(listing_page, "source", None) == "seed"
+        and getattr(listing_page, "university_id", None) is None
+        and getattr(listing_page, "schema_status", None) == "ok"
+        and getattr(listing_page, "quality_status", None) == "healthy"
+    ):
+        return False
+    try:
+        source_url = urlsplit(str(getattr(listing_page, "url", "") or ""))
+        item_url = urlsplit(str(getattr(position, "url", "") or ""))
+    except ValueError:
+        return False
+    item_path = item_url.path.rstrip("/")
+    item_id = item_path.removeprefix("/jobs/")
+    return bool(
+        source_url.hostname == _EURAXESS_HOST
+        and source_url.path.rstrip("/") == "/jobs/search"
+        and item_url.hostname == _EURAXESS_HOST
+        and item_path == f"/jobs/{item_id}"
+        and item_id.isdigit()
+    )
+
+
+def _provisional_gate_decision(
     position: Position,
     *,
     listing_page: ListingPage | None = None,
     today: date | None = None,
-) -> tuple[int, tuple[UncertaintyFlag, ...]] | None:
-    """Return an auditable uncertainty tier for a searchable candidate.
+) -> ProvisionalGateDecision:
+    """Return both the uncertainty tier and a stable inclusion/exclusion reason.
 
     Hard exclusions remain unchanged. Within those boundaries this is
     intentionally recall-oriented: users can opt into title-grounded leads
@@ -399,17 +447,17 @@ def _provisional_assessment(
     """
     current_day = today or local_today()
     if not _is_current(position, current_day):
-        return None
+        return ProvisionalGateDecision(None, "inactive_or_expired")
     if getattr(position, "screening_status", None) not in _PROVISIONAL_SCREENING_STATUSES:
-        return None
+        return ProvisionalGateDecision(None, "screening_status_excluded")
     if getattr(position, "opportunity_kind", None) not in _PROVISIONAL_INDEX_KINDS:
         # In particular, information and spontaneous-application routes stay
         # out of the position index even when semantically related.
-        return None
+        return ProvisionalGateDecision(None, "opportunity_kind_excluded")
     if not _has_supported_evidence_route(position):
-        return None
+        return ProvisionalGateDecision(None, "unsupported_evidence_route")
     if not _has_acceptable_provisional_source(position, listing_page):
-        return None
+        return ProvisionalGateDecision(None, "source_not_healthy")
     title, evidence, evidence_quotes = _position_evidence(
         position,
         today=current_day,
@@ -425,7 +473,7 @@ def _provisional_assessment(
         today=current_day,
     )
     if detail_rejection_evidence(evidence) is not None and not status_conflict:
-        return None
+        return ProvisionalGateDecision(None, "explicit_closure_or_nonopportunity")
     rule_decision = screen_position(
         title,
         url,
@@ -433,7 +481,7 @@ def _provisional_assessment(
         str(getattr(position, "position_type", "other") or "other"),
     )
     if rule_decision.status == "rejected" and not status_conflict:
-        return None
+        return ProvisionalGateDecision(None, "deterministic_rejection")
 
     # A `/jobs/` URL is useful for routing, but it cannot turn every link on a
     # portal into a probable opportunity (production examples included chefs,
@@ -449,7 +497,7 @@ def _provisional_assessment(
     # neighbouring jobs, but the extracted row is not itself an opportunity.
     title_only_decision = screen_position(title, "", "", position_type)
     if title_only_decision.status == "rejected":
-        return None
+        return ProvisionalGateDecision(None, "title_nonopportunity")
     content_decision = screen_position(
         title,
         "",
@@ -468,7 +516,12 @@ def _provisional_assessment(
     # verdict provisional and expose exactly which facts are still missing.
     # Normal discovered portals do not receive this exception, so shared-page
     # headings and navigation noise remain excluded by the existing guards.
+    audited_source_reason: str | None = None
     if _is_audited_curated_portal(listing_page):
+        audited_source_reason = "curated"
+    elif _is_audited_euraxess_item(position, listing_page):
+        audited_source_reason = "official_aggregator"
+    if audited_source_reason is not None and not status_conflict:
         if (
             getattr(position, "full_description", None)
             and triage_evidence_supports(
@@ -477,10 +530,16 @@ def _provisional_assessment(
                 position_type=position_type,
             )
         ):
-            return _OPEN_STATUS_UNVERIFIED_UNCERTAINTY, ("open_status",)
-        return _TITLE_ONLY_CANDIDATE_UNCERTAINTY, (
-            "open_status",
-            "details",
+            return ProvisionalGateDecision(
+                (_OPEN_STATUS_UNVERIFIED_UNCERTAINTY, ("open_status",)),
+                f"{audited_source_reason}_evidence_open_unverified",
+            )
+        return ProvisionalGateDecision(
+            (
+                _TITLE_ONLY_CANDIDATE_UNCERTAINTY,
+                ("open_status", "details"),
+            ),
+            f"{audited_source_reason}_card_details_missing",
         )
 
     # A future deadline plus a rendered Apply link cannot override an explicit
@@ -491,11 +550,14 @@ def _provisional_assessment(
             classify_position(title, "", explicit=position_type)
             in _STATUS_CONFLICT_CANDIDATE_TYPES
         ):
-            return _TITLE_ONLY_CANDIDATE_UNCERTAINTY, (
-                "open_status",
-                "details",
+            return ProvisionalGateDecision(
+                (
+                    _TITLE_ONLY_CANDIDATE_UNCERTAINTY,
+                    ("open_status", "details"),
+                ),
+                "temporal_conflict_role",
             )
-        return None
+        return ProvisionalGateDecision(None, "temporal_conflict_unsupported_type")
 
     if content_decision.status == "eligible" and supported_kind in _POSITION_INDEX_KINDS:
         if application_evidence_supports(
@@ -505,13 +567,19 @@ def _provisional_assessment(
             position_type=position_type,
             today=current_day,
         ):
-            return _GROUNDED_PROBABLE_UNCERTAINTY, ()
+            return ProvisionalGateDecision(
+                (_GROUNDED_PROBABLE_UNCERTAINTY, ()),
+                "grounded_application",
+            )
         if triage_evidence_supports(
             evidence_quotes,
             decision="eligible",
             position_type=position_type,
         ):
-            return _OPEN_STATUS_UNVERIFIED_UNCERTAINTY, ("open_status",)
+            return ProvisionalGateDecision(
+                (_OPEN_STATUS_UNVERIFIED_UNCERTAINTY, ("open_status",)),
+                "application_open_unverified",
+            )
 
     # Strong role-shaped titles are useful leads even when the detail page did
     # not expose an application window. Generic grants/programmes deliberately
@@ -519,9 +587,12 @@ def _provisional_assessment(
     # pages rather than a single application opportunity.
     title_position_type = classify_position(title, "")
     if title_position_type in _TITLE_ONLY_CANDIDATE_TYPES:
-        return _TITLE_ONLY_CANDIDATE_UNCERTAINTY, (
-            "open_status",
-            "details",
+        return ProvisionalGateDecision(
+            (
+                _TITLE_ONLY_CANDIDATE_UNCERTAINTY,
+                ("open_status", "details"),
+            ),
+            "strong_role_title",
         )
     if (
         getattr(position, "screening_status", None) == "eligible"
@@ -532,12 +603,29 @@ def _provisional_assessment(
         # users can opt into it without a database migration or another model
         # pass. Hard source, currentness and non-opportunity exclusions above
         # still apply.
-        return _UNGROUNDED_LEGACY_UNCERTAINTY, (
-            "verification",
-            "open_status",
-            "details",
+        return ProvisionalGateDecision(
+            (
+                _UNGROUNDED_LEGACY_UNCERTAINTY,
+                ("verification", "open_status", "details"),
+            ),
+            "legacy_positive",
         )
-    return None
+    return ProvisionalGateDecision(None, "insufficient_candidate_evidence")
+
+
+def _provisional_assessment(
+    position: Position,
+    *,
+    listing_page: ListingPage | None = None,
+    today: date | None = None,
+) -> ProvisionalAssessment | None:
+    """Return the existing public gate result while retaining diagnostics internally."""
+
+    return _provisional_gate_decision(
+        position,
+        listing_page=listing_page,
+        today=today,
+    ).assessment
 
 
 def is_provisional_eligible(

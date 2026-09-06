@@ -20,8 +20,9 @@ class University(Base):
     website_url: Mapped[str] = mapped_column(String(2048))
     description: Mapped[str | None] = mapped_column(Text)
     spontaneous_application_url: Mapped[str | None] = mapped_column(String(2048))
-    # core = tassonomia universitaria; specialist = istituto superiore ammesso
-    # tramite classi mirate e segnali di riconoscimento accademico.
+    # core = tassonomia universitaria; specialist = istituto superiore;
+    # research = fondazione/istituto di ricerca riconosciuto. I nomi storici
+    # della tabella e della API sono mantenuti per compatibilita'.
     catalog_tier: Mapped[str] = mapped_column(String(16), default="core")
     catalog_basis: Mapped[str] = mapped_column(String(128), default="wikidata:Q3918")
     # ponytail: n. di sitelink Wikipedia come proxy di notorietà; QS/THE se serve un ranking vero

@@ -3,6 +3,8 @@
 from phd_searcher.pipeline.universities import (
     _CURATED_INSTITUTIONS,
     _EXCLUDED_INSTITUTION_IDS,
+    _RESEARCH_ORG_CLASSES,
+    _RESEARCH_ORGS_QUERY,
     _SPECIALIST_CLASSES,
     _SPECIALISTS_QUERY,
     _UNIS_QUERY,
@@ -40,6 +42,18 @@ def test_specialist_query_has_conservative_quality_gates() -> None:
     assert "wd:Q184644" in rendered
 
 
+def test_research_organization_query_requires_research_class_ror_and_reputation() -> None:
+    assert {"Q31855", "Q7315155"} <= _RESEARCH_ORG_CLASSES.keys()
+    rendered = _RESEARCH_ORGS_QUERY.format(
+        qid="Q38",
+        research_classes=" ".join(f"wd:{item}" for item in _RESEARCH_ORG_CLASSES),
+    )
+    assert "wdt:P31/wdt:P279* ?researchClass" in rendered
+    assert "wdt:P6782 ?ror" in rendered
+    assert "?sitelinks >= 2" in rendered
+    assert "wd:Q38" in rendered
+
+
 def test_ecal_is_in_curated_institutions() -> None:
     ecal = next(item for item in _CURATED_INSTITUTIONS if item["wikidata_id"] == "Q3577724")
     assert ecal["country"] == "CH"
@@ -51,7 +65,12 @@ def test_verified_specialist_gaps_are_curated() -> None:
     curated = {item["wikidata_id"]: item for item in _CURATED_INSTITUTIONS}
     assert curated["Q3128581"]["country"] == "CH"  # HEAD Geneve lacks ROR/WHED in Wikidata
     assert curated["Q2504327"]["country"] == "MC"  # only missing catalog country
-    assert all(item["catalog_tier"] == "specialist" for item in curated.values())
+    assert curated["Q3803752"]["catalog_tier"] == "research"
+    assert curated["Q3747148"]["website_url"] == "https://www.fbk.eu/"
+    assert {item["catalog_tier"] for item in curated.values()} <= {
+        "specialist",
+        "research",
+    }
 
 
 def test_verified_stale_websites_are_overridden() -> None:

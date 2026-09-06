@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import socket
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import cast
 from urllib.parse import urlparse
 
@@ -28,6 +28,10 @@ from phd_searcher.pipeline.normalize import (
 from phd_searcher.pipeline.progress import Progress
 from phd_searcher.pipeline.retry import clear_retry, retry_async
 from phd_searcher.pipeline.schema_quality import repair_base_anchor_url_schema
+from phd_searcher.pipeline.source_adapters import (
+    fetch_source_adapter,
+    normalize_source_item_formats,
+)
 from phd_searcher.pipeline.urls import is_listing_page_url
 
 _SAFETY_MAX_PAGES = 1500
@@ -35,6 +39,8 @@ _MISSING_RUNS_BEFORE_INACTIVE = 2
 _EURAXESS_HOST = "euraxess.ec.europa.eu"
 _EURAXESS_PAGE_DELAY = 6.0
 _EURAXESS_RATE_LIMIT_COOLDOWN = 300.0
+_DEFAULT_DEFERRED_COOLDOWN = 60.0
+_MAX_AUTO_DEFERRED_ATTEMPTS = 3
 _DNS_FAILURE_MARKERS = (
     "ERR_NAME_NOT_RESOLVED",
     "ERR_INTERNET_DISCONNECTED",
@@ -66,6 +72,67 @@ def _checkpoint_ids(value: object) -> set[int]:
         for item in value
         if isinstance(item, (int, float, str))
     }
+
+
+def _deferred_source_ids(value: object) -> set[int]:
+    if not isinstance(value, dict):
+        return set()
+    return {
+        source_id
+        for raw_id in value
+        if (source_id := _checkpoint_int(raw_id)) > 0
+    }
+
+
+def _restore_completed_deferred_sources(
+    deferred_sources: dict[str, object],
+    completed_source_ids: set[int],
+) -> int:
+    """Repair legacy checkpoints without losing their saved retry cursor."""
+
+    restored = 0
+    for source_id in _deferred_source_ids(deferred_sources):
+        if source_id in completed_source_ids:
+            completed_source_ids.remove(source_id)
+            restored += 1
+    return restored
+
+
+def _deferred_source_cursor(
+    deferred_sources: dict[str, object],
+    source_id: int,
+) -> tuple[int, str | None]:
+    """Return the exact failed page and original refresh timestamp, if durable."""
+    raw_entry = deferred_sources.get(str(source_id), {})
+    entry = raw_entry if isinstance(raw_entry, dict) else {}
+    page = max(_checkpoint_int(entry.get("page", 0)), 0)
+    raw_started_at = entry.get("source_started_at")
+    started_at = raw_started_at if isinstance(raw_started_at, str) else None
+    return page, started_at
+
+
+def _checkpoint_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+async def _wait_for_deferred_source(progress: Progress, retry_at: datetime | None) -> bool:
+    """Wait for a queued source without making Stop unresponsive."""
+
+    while retry_at is not None:
+        delay = (retry_at - datetime.now(UTC)).total_seconds()
+        if delay <= 0:
+            break
+        await asyncio.sleep(min(delay, 30.0))
+        await progress.check_stop()
+        if _should_stop(progress):
+            return False
+    return True
 
 
 def _should_stop(progress: Progress) -> bool:
@@ -112,6 +179,12 @@ async def _fetch_page(
     url = f"{page.url}{sep}{page.pagination_param}={page_number}" if page.pagination_param else page.url
 
     async def fetch() -> list[dict[str, object]]:
+        adapter_items = await fetch_source_adapter(
+            dict(page.extraction_schema or {}),
+            page_number=page_number,
+        )
+        if adapter_items is not None:
+            return adapter_items
         result = await crawler.arun(url, config=config)
         if not result.success:
             message = result.error_message or f"fetch failed: {url}"
@@ -130,7 +203,10 @@ async def _fetch_page(
         progress,
         f"scrape:{page.id}:page:{page_number}",
         fetch,
-        max_attempts=8 if is_euraxess else 3,
+        # A EURAXESS visit makes two attempts, then yields to unrelated
+        # sources. The durable source queue below retries it after cooldown,
+        # avoiding a long 429 stall in the middle of the scrape stage.
+        max_attempts=2 if is_euraxess else 3,
         base_delay=60 if is_euraxess else 10,
         max_delay=900 if is_euraxess else 60,
         # Crawl4AI conserva il testo "HTTP 429" ma non gli header: EURAXESS
@@ -447,6 +523,25 @@ async def run(
     quarantined_sources = dict(raw_quarantined) if isinstance(raw_quarantined, dict) else {}
     raw_deferred = checkpoint.get("deferred_sources", {})
     deferred_sources = dict(raw_deferred) if isinstance(raw_deferred, dict) else {}
+    deferred_total = _checkpoint_int(checkpoint.get("deferred_total", 0))
+    deferred_processed = _checkpoint_int(checkpoint.get("deferred_processed", 0))
+    legacy_deferred = _restore_completed_deferred_sources(
+        deferred_sources,
+        completed_source_ids,
+    )
+    if legacy_deferred:
+        processed_sources = max(processed_sources - legacy_deferred, 0)
+        deferred_total = max(
+            deferred_total,
+            deferred_processed + len(deferred_sources),
+        )
+        await progress.save_checkpoint(
+            completed_source_ids=sorted(completed_source_ids),
+            processed_sources=processed_sources,
+            deferred_sources=deferred_sources,
+            deferred_total=deferred_total,
+            deferred_processed=deferred_processed,
+        )
     async with session_maker() as session:
         stmt = (
             select(ListingPage, University)
@@ -483,6 +578,11 @@ async def run(
             selected_source_ids = {page.id for page, _ in rows}
             await progress.save_checkpoint(selected_source_ids=sorted(selected_source_ids))
         rows = [(page, uni) for page, uni in rows if page.id not in completed_source_ids]
+        # On Resume, finish untouched sources before revisiting cooldown-bound
+        # ones. During this run, failed sources are appended to this same list,
+        # naturally interleaving them behind useful work instead of blocking it.
+        deferred_ids = _deferred_source_ids(deferred_sources)
+        rows.sort(key=lambda row: row[0].id in deferred_ids)
         await progress.begin(len(rows))
 
         async with AsyncWebCrawler() as crawler:
@@ -491,6 +591,16 @@ async def run(
                     break
                 await progress.tick(uni.name if uni else page.url)
                 if progress.should_stop:
+                    break
+                raw_deferred_entry = deferred_sources.get(str(page.id), {})
+                deferred_entry = (
+                    dict(raw_deferred_entry)
+                    if isinstance(raw_deferred_entry, dict)
+                    else {}
+                )
+                is_deferred = bool(deferred_entry)
+                retry_at = _checkpoint_datetime(deferred_entry.get("retry_at"))
+                if is_deferred and not await _wait_for_deferred_source(progress, retry_at):
                     break
                 schema = repair_base_anchor_url_schema(
                     dict(page.extraction_schema or {})
@@ -503,12 +613,29 @@ async def run(
                     check_robots_txt=True,
                     extraction_strategy=strategy,
                 )
-                start_page = next_page if active_source_id == page.id else 0
+                deferred_page, deferred_started_at = _deferred_source_cursor(
+                    deferred_sources,
+                    page.id,
+                )
+                start_page = (
+                    deferred_page
+                    if is_deferred
+                    else next_page
+                    if active_source_id == page.id
+                    else 0
+                )
                 page_budget, require_empty_page = _page_budget(page, max_pages)
                 page_stop = start_page + page_budget if require_empty_page else page_budget
-                if active_source_id == page.id and isinstance(raw_source_started_at, str):
+                effective_started_at = (
+                    deferred_started_at
+                    if is_deferred
+                    else raw_source_started_at
+                    if active_source_id == page.id
+                    else None
+                )
+                if isinstance(effective_started_at, str):
                     try:
-                        source_started_at = datetime.fromisoformat(raw_source_started_at)
+                        source_started_at = datetime.fromisoformat(effective_started_at)
                     except ValueError:
                         source_started_at = datetime.now(UTC).replace(tzinfo=None)
                 else:
@@ -522,6 +649,7 @@ async def run(
                 source_finished = False
                 exhaustive_source = False
                 source_skipped = False
+                source_deferred = False
                 for page_number in range(start_page, page_stop):
                     await progress.check_stop()
                     if _should_stop(progress):
@@ -533,6 +661,10 @@ async def run(
                             config,
                             page_number=page_number,
                             progress=progress,
+                        )
+                        raw_items = normalize_source_item_formats(
+                            raw_items,
+                            page.extraction_schema,
                         )
                     except Exception as exc:
                         if _should_stop(progress):
@@ -561,16 +693,36 @@ async def run(
                         retry_key = f"scrape:{page.id}:page:{page_number}"
                         reason = str(exc)[:1000]
                         print(f"scrape: deferring unreachable source {page.url}: {reason}")
+                        previous_entry = deferred_entry
+                        attempts = _checkpoint_int(previous_entry.get("attempts", 0)) + 1
+                        is_euraxess = urlparse(page.url).hostname == _EURAXESS_HOST
+                        cooldown = (
+                            _EURAXESS_RATE_LIMIT_COOLDOWN
+                            if is_euraxess
+                            else _DEFAULT_DEFERRED_COOLDOWN
+                        )
+                        if not previous_entry:
+                            deferred_total += 1
                         deferred_sources[str(page.id)] = {
                             "url": page.url,
                             "page": page_number,
                             "reason": reason,
                             "at": datetime.now(UTC).isoformat(),
+                            "source_started_at": raw_source_started_at,
+                            "retry_at": (
+                                datetime.now(UTC) + timedelta(seconds=cooldown)
+                            ).isoformat(),
+                            "attempts": attempts,
                         }
                         await clear_retry(progress, retry_key)
-                        await progress.save_checkpoint(deferred_sources=deferred_sources)
+                        await progress.save_checkpoint(
+                            deferred_sources=deferred_sources,
+                            deferred_total=deferred_total,
+                            deferred_processed=deferred_processed,
+                        )
                         source_finished = True
                         source_skipped = True
+                        source_deferred = True
                         break
                     if not raw_items:
                         if page_number == 0:
@@ -625,7 +777,9 @@ async def run(
                 if source_finished and not source_skipped:
                     page.last_scraped_at = datetime.now(UTC).replace(tzinfo=None)
                     await session.commit()
-                if source_finished:
+                if source_finished and not source_deferred:
+                    if deferred_sources.pop(str(page.id), None) is not None:
+                        deferred_processed += 1
                     completed_source_ids.add(page.id)
                     processed_sources += 1
                     active_source_id = 0
@@ -638,6 +792,42 @@ async def run(
                         next_page=next_page,
                         source_started_at=raw_source_started_at,
                         upserted=upserted,
+                        deferred_sources=deferred_sources,
+                        deferred_total=deferred_total,
+                        deferred_processed=deferred_processed,
                     )
+                elif source_deferred:
+                    active_source_id = 0
+                    next_page = 0
+                    raw_source_started_at = None
+                    entry = deferred_sources.get(str(page.id), {})
+                    attempts = (
+                        _checkpoint_int(entry.get("attempts", 0))
+                        if isinstance(entry, dict)
+                        else 0
+                    )
+                    if attempts < _MAX_AUTO_DEFERRED_ATTEMPTS:
+                        rows.append((page, uni))
+                        if progress.total is not None:
+                            progress.total += 1
+                    await progress.save_checkpoint(
+                        active_source_id=active_source_id,
+                        next_page=next_page,
+                        source_started_at=raw_source_started_at,
+                        deferred_sources=deferred_sources,
+                        deferred_total=deferred_total,
+                        deferred_processed=deferred_processed,
+                    )
+        if deferred_sources and not _should_stop(progress):
+            # A manual Resume starts a fresh bounded set of automatic visits;
+            # the exact page and original refresh timestamp remain durable.
+            for raw_entry in deferred_sources.values():
+                if isinstance(raw_entry, dict):
+                    raw_entry["attempts"] = 0
+            await progress.save_checkpoint(deferred_sources=deferred_sources)
+            raise RuntimeError(
+                f"scrape deferred {len(deferred_sources)} unreachable source(s); "
+                "resume to continue from their saved pages"
+            )
     print(f"scrape: {upserted} positions upserted")
     return upserted

@@ -105,6 +105,27 @@ SELECT DISTINCT ?u ?uLabel ?uDescription ?website ?sitelinks ?specialistClass WH
 ORDER BY DESC(?sitelinks) ?u
 """
 
+# Livello 3: enti che svolgono ricerca e pubblicano bandi propri. Una classe
+# esplicitamente di ricerca, ROR, sito ufficiale e almeno due sitelink evitano
+# di importare la categoria molto piu' rumorosa di tutte le fondazioni.
+_RESEARCH_ORG_CLASSES = {
+    "Q31855": "research institute",
+    "Q7315155": "research center",
+}
+_RESEARCH_ORGS_QUERY = """
+SELECT DISTINCT ?u ?uLabel ?uDescription ?website ?sitelinks ?researchClass WHERE {{
+  VALUES ?researchClass {{ {research_classes} }}
+  ?u wdt:P31/wdt:P279* ?researchClass .
+  ?u wdt:P17 wd:{qid} .
+  ?u wdt:P856 ?website .
+  ?u wdt:P6782 ?ror .
+  ?u wikibase:sitelinks ?sitelinks .
+  FILTER(?sitelinks >= 2)
+  SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en,it". }}
+}}
+ORDER BY DESC(?sitelinks) ?u
+"""
+
 # Le eccezioni ufficialmente verificate possono superare il gate incompleto di
 # Wikidata. Usano comunque il vero QID, evitando duplicati futuri.
 _CURATED_INSTITUTIONS = (
@@ -137,6 +158,35 @@ _CURATED_INSTITUTIONS = (
         "sitelinks": 3,
         "catalog_tier": "specialist",
         "catalog_basis": "curated:government-recognition;wikidata:Q2504327",
+    },
+    {
+        "wikidata_id": "Q3803752",
+        "name": (
+            "Institute of Information Science and Technologies "
+            "\"Alessandro Faedo\" (ISTI-CNR)"
+        ),
+        "country": "IT",
+        "website_url": "https://www.isti.cnr.it/it/",
+        "description": (
+            "Computer-science research institute of the Italian National "
+            "Research Council in Pisa"
+        ),
+        "sitelinks": 2,
+        "catalog_tier": "research",
+        "catalog_basis": "curated:official-site;wikidata:Q3803752",
+    },
+    {
+        "wikidata_id": "Q3747148",
+        "name": "Fondazione Bruno Kessler (FBK)",
+        "country": "IT",
+        "website_url": "https://www.fbk.eu/",
+        "description": (
+            "Research foundation in Trento working across science, technology "
+            "and the humanities"
+        ),
+        "sitelinks": 4,
+        "catalog_tier": "research",
+        "catalog_basis": "curated:official-site;wikidata:Q3747148",
     },
 )
 
@@ -254,6 +304,28 @@ async def run(
                         base_delay=30,
                         max_delay=900,
                     )
+                    await asyncio.sleep(5)
+
+                    async def fetch_research_orgs(
+                        current_qid: str = qid,
+                    ) -> list[_SparqlRow]:
+                        return await _sparql(
+                            client,
+                            _RESEARCH_ORGS_QUERY.format(
+                                qid=current_qid,
+                                research_classes=" ".join(
+                                    f"wd:{item}" for item in _RESEARCH_ORG_CLASSES
+                                ),
+                            ),
+                        )
+
+                    research_rows = await retry_async(
+                        progress,
+                        f"wikidata:{code}:research",
+                        fetch_research_orgs,
+                        base_delay=30,
+                        max_delay=900,
+                    )
                 except RetryInterruptedError:
                     break
                 except RetryExhaustedError as exc:
@@ -273,6 +345,14 @@ async def run(
                         f"wikidata:{row['specialistClass']['value'].rsplit('/', 1)[-1]}",
                     )
                     for row in specialist_rows
+                )
+                rows.extend(
+                    (
+                        row,
+                        "research",
+                        f"wikidata:{row['researchClass']['value'].rsplit('/', 1)[-1]};ror",
+                    )
+                    for row in research_rows
                 )
 
                 start = country_offset if active_country == code else 0
@@ -340,7 +420,8 @@ async def run(
                     break
                 print(
                     f"universities: {code}: {len(core_rows)} core + "
-                    f"{len(specialist_rows)} specialist rows"
+                    f"{len(specialist_rows)} specialist + "
+                    f"{len(research_rows)} research rows"
                 )
                 if limit is not None and processed >= limit:
                     break

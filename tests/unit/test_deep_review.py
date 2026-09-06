@@ -256,8 +256,8 @@ def test_deep_review_repairs_a_wrong_kind_when_quotes_ground_another_kind():
 def test_deep_review_repairs_open_window_misfiled_as_negative_evidence():
     title = "ETH Pioneer Fellowships"
     window = (
-        "The application portal opens on July 1, 2026 and closes on "
-        "Sept 1, 2026 5pm."
+        "The application portal opens on July 1, 2099 and closes on "
+        "Sept 1, 2099 5pm."
     )
     decision = _validated_decision(
         _call(

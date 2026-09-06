@@ -365,6 +365,8 @@ def normalize_item(item: dict[str, object], *, base_url: str) -> NormalizedPosit
         return None
     deadline_raw = _text(item.get("deadline"))[:256] or None
     published_raw = _text(item.get("published"))[:256] or None
+    deadline_hint = parse_deadline(_text(item.get("__phdbot_deadline_date")))
+    published_hint = parse_deadline(_text(item.get("__phdbot_published_date")))
     compensation_raw = _text(item.get("compensation"))[:512] or None
     compensation_min, compensation_max, compensation_currency, compensation_period = parse_compensation(compensation_raw)
     if not _plausible_compensation(compensation_raw):
@@ -385,9 +387,9 @@ def normalize_item(item: dict[str, object], *, base_url: str) -> NormalizedPosit
         compensation_currency=compensation_currency,
         compensation_period=compensation_period,
         published_raw=published_raw,
-        published_at=parse_deadline(published_raw),
+        published_at=published_hint or parse_deadline(published_raw),
         position_type=classify_position(title, description, _text(item.get("position_type")) or None),
         research_group=_text(item.get("research_group"))[:512] or None,
         deadline_raw=deadline_raw,
-        deadline=parse_deadline(deadline_raw),
+        deadline=deadline_hint or parse_deadline(deadline_raw),
     )
