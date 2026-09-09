@@ -131,7 +131,7 @@ function render(){{const needle=document.querySelector("#filter").value.toLowerC
 let rows=report.hits.map((x,i)=>({{...x,number:i+1}})).filter(x=>!needle||JSON.stringify(x).toLowerCase().includes(needle));
 if(sort!=="original")rows.sort((a,b)=>String(a[sort]??"").localeCompare(String(b[sort]??""),undefined,{{numeric:true}}));
 const root=document.querySelector("#results");root.replaceChildren();for(const x of rows){{const d=document.createElement("article");d.className="card";
-const score=document.createElement("span");score.className="score";score.textContent=Number(x.score).toFixed(3);d.append(score);
+const score=document.createElement("span");score.className="score";score.textContent=x.score==null?"—":Number(x.score).toFixed(3);d.append(score);
 const a=document.createElement("a");a.href=safeUrl(x.url);a.target="_blank";a.rel="noopener";a.textContent=`${{x.number}}. ${{x.title}}`;d.append(a);
 if(Number(x.uncertainty_percent)>0){{const u=document.createElement("span");u.className="uncertain";u.textContent=`Uncertainty ${{x.uncertainty_percent}}%`;u.title=(x.uncertainty_flags||[]).join(", ")||"Automatic verdict not final";d.append(u)}}
 if(x.source_family_signal){{const f=document.createElement("span");f.className="uncertain";f.textContent=x.source_family_signal==="supports_opportunity"?"Opportunity route":"Disputed route";f.title=`URL-family prior from ${{x.source_family_samples||0}} sibling labels; not evidence about this exact item`;d.append(f)}}

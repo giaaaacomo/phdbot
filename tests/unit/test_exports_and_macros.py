@@ -50,6 +50,18 @@ def test_csv_and_json_exports_are_portable():
     assert json_data["hits"][0]["position_id"] == 7
 
 
+def test_browse_exports_preserve_absent_semantic_score():
+    payload = {
+        **PAYLOAD,
+        "search": {"query": "", "universities": ["Example"]},
+        "hits": [{**PAYLOAD["hits"][0], "score": None}],
+    }
+    assert json.loads(ExportService._json(payload))["hits"][0]["score"] is None
+    assert 'x.score==null?"—"' in ExportService._html(payload).decode()
+    assert "None" not in ExportService._csv(payload).decode("utf-8-sig")
+    assert MacroCreate(name="Browse", search=SearchBody(university="Example")).search.query == ""
+
+
 def test_macro_requires_relative_destination_and_deduplicates_formats():
     macro = MacroCreate(
         name="Robotics",

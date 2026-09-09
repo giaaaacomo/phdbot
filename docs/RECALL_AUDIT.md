@@ -71,3 +71,46 @@ the repaired paths work; they do not establish overall recall or guarantee
 that all opportunities have been found. Counts are dated snapshots and change
 as jobs close. The stratified cross-provider benchmark remains the procedure
 for measuring completeness.
+
+## September 6 benchmark: remaining gaps
+
+The dated input is [recall_sources.2026-09-06.json](../benchmarks/recall_sources.2026-09-06.json):
+12 examples, including six primary-confirmed open examples, two expired controls and one
+conflicting-deadline example. One open example is an EngD, not a PhD. Status is evidence as of
+the recorded date, not a promise that an opportunity remains open today. This small targeted
+sample cannot estimate whole-catalog recall.
+
+- ETH Customer-Facing AI is acquired and indexed. Imperial Cardiac Imaging and StatML are
+  absent at acquisition, not merely filtered out by relevance. Department studentships do not
+  necessarily appear on central staff vacancy feeds. The cardiac page's direct fetch returned
+  403; increasing model quality would not solve that access gap.
+- Discovery previously spent its entire 30-link budget on homepage links even after fetching
+  department hubs. Round-robin candidate selection now shares the same fixed budget between
+  homepage, sitemap and hubs; `studentship` is also recognized. No extra fetch/model budget is
+  introduced. This does not solve arbitrary multi-hop discovery or HTTP 403s.
+- BI Norwegian Business School was missing from the catalog. Audit business-school admission
+  criteria before widening taxonomy; do not include all entities of an unverified Wikidata class.
+- A closed Twente opportunity has unknown-deadline indexed duplicates while its EURAXESS copy
+  has the elapsed deadline. Cross-source identity/currentness needs evidence-aware reconciliation.
+- FBK has unlinked institution aliases. One surviving alias contains a literal source deadline
+  in year 2925. Do not assume a corrected year or blindly relink it as a valid current vacancy.
+- Several sources were last refreshed August 25. Separate ordinary freshness gaps from missing
+  catalog/source/schema paths before spending compute on review or embeddings.
+
+Next: verify each sample at catalog → source → acquired row → published index → retrieval,
+record the earliest failed boundary, and repair it with a bounded institutional canary. Preserve
+source evidence and uncertain dates; do not turn aggregator labels into unverified ground truth.
+
+### September 10: Copenhagen client-side pagination
+
+Run #98's successful completion did not establish complete acquisition. A fresh read-only check
+found the target Biomolecular Native Mass Spectrometry fellowship still absent from PostgreSQL.
+The official PhD page contained 22 server-rendered table rows, but DataTables left only 10 in
+the rendered DOM selected by the existing schema; the target was on a hidden page. The official
+all-vacancies table contained 88 rows and also included the target.
+
+The two exact official listing URLs now use a bounded raw-HTML adapter before browser extraction.
+It reads all rows in one request, validates table columns, vacancy links and day-month-year dates,
+and fails rather than treating malformed/blocked responses as empty successful refreshes. No new
+LLM calls, generic table heuristics or database schema changes are involved. Other institutional
+JavaScript-paginated tables still need independent audit; this fix is not a global completeness claim.

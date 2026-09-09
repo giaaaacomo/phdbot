@@ -182,6 +182,7 @@ async def _fetch_page(
         adapter_items = await fetch_source_adapter(
             dict(page.extraction_schema or {}),
             page_number=page_number,
+            source_url=page.url,
         )
         if adapter_items is not None:
             return adapter_items

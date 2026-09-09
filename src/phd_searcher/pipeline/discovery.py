@@ -55,6 +55,7 @@ _KEYWORDS = (
     "doutoramento",
     "postdoc",
     "assistantship",
+    "studentship",
     "internship",
     "traineeship",
     "tirocinio",
@@ -191,16 +192,38 @@ async def _collect_candidates(
     Tutti i livelli sempre: i candidati della sola homepage sono spesso pagine
     informative che l'LLM scarta, mentre il listing vero è un hop più in là.
     """
-    merged: dict[str, _Link] = {c.href: c for c in _candidates(links)}
-    for c in await _sitemap_candidates(website_url):
-        merged.setdefault(c.href, c)
+    groups = [_candidates(links), await _sitemap_candidates(website_url)]
     for hub in _hub_links(links):
         result = await crawler.arun(hub, config=config)
         if result.success:
             hub_links = list(result.links.get("internal", [])) + list(result.links.get("external", []))
-            for c in _candidates(hub_links):
-                merged.setdefault(c.href, c)
-    return list(merged.values())[:_MAX_CANDIDATES]
+            groups.append(_candidates(hub_links))
+    return _merge_candidate_groups(groups)
+
+
+def _merge_candidate_groups(groups: list[list[_Link]]) -> list[_Link]:
+    """Share the fixed candidate budget across homepage, sitemap and hubs.
+
+    Concatenation followed by truncation discarded every department link when
+    a homepage already supplied 30 candidates, despite fetching all the hubs.
+    Round-robin preserves their representation without extra requests, a
+    larger prompt, or automatically trusting any page as a vacancy listing.
+    Duplicate links do not consume another group's turn.
+    """
+    iterators = [iter(group) for group in groups]
+    merged: dict[str, _Link] = {}
+    while iterators and len(merged) < _MAX_CANDIDATES:
+        active = []
+        for candidates in iterators:
+            for candidate in candidates:
+                if candidate.href not in merged:
+                    merged[candidate.href] = candidate
+                    active.append(candidates)
+                    break
+            if len(merged) == _MAX_CANDIDATES:
+                break
+        iterators = active
+    return list(merged.values())
 
 
 def _parse_reply(reply: str, allowed: set[str]) -> list[str]:

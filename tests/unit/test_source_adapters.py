@@ -1,17 +1,90 @@
 from datetime import date
 from typing import ClassVar
 
+import httpx
 import pytest
 
 from phd_searcher.pipeline import source_adapters
 from phd_searcher.pipeline.normalize import normalize_item
 from phd_searcher.pipeline.source_adapters import (
+    copenhagen_items,
     fetch_source_adapter,
     normalize_source_item_formats,
     source_adapter_name,
     talentadore_items,
     talentlink_items,
 )
+
+
+def _copenhagen_table(rows):
+    return (
+        '<table class="vacancies"><thead><tr><th>Title</th><th>Faculty</th><th>Location</th><th>Deadline</th></tr></thead><tbody>'
+        + rows
+        + "</tbody></table>"
+    )
+
+
+def test_copenhagen_reads_all_rows_before_client_side_pagination():
+    rows = "".join(
+        f'<tr class="vacancy-specs"><td><a href="?show={i}">PhD {i}</a></td><td>Science</td><td>Lab</td><td>27-09-2026</td></tr>'
+        for i in range(22)
+    )
+    items = copenhagen_items(_copenhagen_table(rows), "https://employment.ku.dk/phd/")
+    assert len(items) == 22
+    assert items[-1]["url"] == "https://employment.ku.dk/phd/?show=21"
+    assert items[-1]["__phdbot_deadline_date"] == "2026-09-27"
+    assert items[-1]["deadline"] == "27-09-2026"
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        "Access denied",
+        _copenhagen_table("<tr><td>Broken</td></tr>"),
+        _copenhagen_table("").replace("Deadline", "Changed"),
+    ],
+)
+def test_copenhagen_fails_closed_on_missing_or_changed_table(html):
+    with pytest.raises(RuntimeError, match="Copenhagen"):
+        copenhagen_items(html, "https://employment.ku.dk/phd/")
+
+
+@pytest.mark.parametrize(
+    "href", ["https://evil.example/?show=1", "https://employment.ku.dk.evil.example/?show=1", "?show=not-a-job"]
+)
+def test_copenhagen_rejects_unexpected_job_links(href):
+    row = f'<tr><td><a href="{href}">PhD</a></td><td>S</td><td>L</td><td>27-09-2026</td></tr>'
+    with pytest.raises(RuntimeError, match="invalid vacancy link"):
+        copenhagen_items(_copenhagen_table(row), "https://employment.ku.dk/phd/")
+
+
+async def test_copenhagen_does_not_refetch_fake_pages_or_untrusted_hosts():
+    assert await fetch_source_adapter({}, source_url="https://employment.ku.dk/phd/", page_number=1) == []
+    assert await fetch_source_adapter({}, source_url="https://evil.example/phd/", page_number=0) is None
+    assert copenhagen_items(_copenhagen_table(""), "https://employment.ku.dk/phd/") == []
+
+
+@pytest.mark.parametrize("status", [200, 403])
+async def test_copenhagen_fetch_dispatch_and_http_failure(monkeypatch, status):
+    requests = []
+    original_client = httpx.AsyncClient
+
+    def respond(request):
+        requests.append(str(request.url))
+        return httpx.Response(status, text=_copenhagen_table(""))
+
+    def client(**kwargs):
+        assert kwargs["follow_redirects"] is False
+        return original_client(**kwargs, transport=httpx.MockTransport(respond))
+
+    monkeypatch.setattr(source_adapters.httpx, "AsyncClient", client)
+    url = "https://employment.ku.dk/phd/"
+    if status == 200:
+        assert await fetch_source_adapter({}, source_url=url, page_number=0) == []
+    else:
+        with pytest.raises(httpx.HTTPStatusError):
+            await fetch_source_adapter({}, source_url=url, page_number=0)
+    assert requests == [url]
 
 
 def test_source_declared_us_dates_are_not_guessed_as_european() -> None:

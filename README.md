@@ -12,6 +12,8 @@ higher education, have an official website and minimum public documentation, and
 WHED identifier; individually verified institutions can be maintained as curated exceptions.
 Audited official vacancy portals can likewise be kept in a small curated-source registry when
 generic discovery misses them; they complement normal discovery rather than replacing it.
+An additional conservative `research` tier covers research institutes/centres with an official
+website, ROR identifier and minimum public documentation. ISTI-CNR and FBK are curated seeds.
 
 ## Quickstart
 
@@ -66,6 +68,12 @@ the Search filters and portable exports.
 Search results can be downloaded as a standalone interactive HTML report, printable PDF, CSV or
 JSON. HTML embeds the selected query, filters, result details and client-side filtering, so the
 recipient does not need a running PHDBOT instance.
+
+To browse an institution without semantic ranking, select one or more institutions and leave the
+query empty. This lists matching indexed opportunities without embeddings or a relevance threshold;
+date, type, compensation and verification filters still apply. The score is absent (`null` in the
+API), and default ordering is by catalog ID. Coverage's extracted count is not a count of searchable
+openings, so it need not equal browse totals. Saved shortlists and exports support both search modes.
 
 Search has two explicit verification modes. `verified_only` returns final accepted records;
 `include_probable` also returns unresolved records that pass hard currentness, source-quality and

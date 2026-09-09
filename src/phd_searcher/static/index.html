@@ -405,9 +405,9 @@
   <!-- SEARCH -->
   <section id="search" class="tab" role="tabpanel" aria-labelledby="tab-search" hidden>
     <div class="card">
-      <h2>Semantic search</h2>
+      <h2>Search or browse institutions</h2>
       <div class="controls">
-        <input id="s-query" type="text" aria-label="Semantic search query" title="Use + to combine up to 8 searches: each part is searched separately and every result keeps its best score. Write \+ when the plus is part of a term." placeholder="e.g. VR + XR + interaction design" style="flex:1;min-width:240px">
+        <input id="s-query" type="text" aria-label="Semantic search query" title="Use + to combine up to 8 searches: each part is searched separately and every result keeps its best score. Write \+ when the plus is part of a term. Leave empty to browse selected institutions; safety and other filters still apply." placeholder="e.g. VR + XR + interaction design" style="flex:1;min-width:240px">
         <button class="act" id="btn-search" title="Rank indexed opportunities by semantic relevance, then apply the filters below">Search</button>
         <select id="s-export-format" title="Portable format used to share the current result set"><option value="html">HTML</option><option value="pdf">PDF</option><option value="csv">CSV</option><option value="json">JSON</option></select>
         <button class="act ghost" id="btn-export" disabled title="Export the current search results and active filters">Export</button>
@@ -1160,6 +1160,7 @@ function toggleSearchPill(query) {
   if (index >= 0) selectedSearchPills.splice(index, 1);
   else selectedSearchPills.push(query);
   $("#s-query").value = selectedSearchPills.join(" + ");
+  updateSearchMode();
   renderSearchHistory();
   $("#s-query").focus();
 }
@@ -1426,7 +1427,7 @@ function renderSavedCalendar(records) {
 }
 function renderSavedItem(record, index) {
   const hit = record.hit;
-  const score = Number.isFinite(Number(hit.score)) ? Number(hit.score).toFixed(3) : "—";
+  const score = hit.score != null && Number.isFinite(Number(hit.score)) ? Number(hit.score).toFixed(3) : "—";
   return `<div class="hit numbered-hit search-result${resultViewClass(hit.position_id)}" data-position-id="${Number(hit.position_id)}">
     <span class="hit-number">${index + 1}.</span>
     <div class="hit-content">
@@ -1481,15 +1482,18 @@ document.addEventListener("keydown", event => {
   }
 });
 function renderInstitutions() {
-  if (!searchFacets) return;
+  if (!searchFacets) { updateSearchMode(); return; }
   const countries = checkedValues(".s-country-option");
   const previouslySelected = new Set(checkedValues(".s-univ-option"));
   const institutions = searchFacets.institutions.filter(item => !countries.length || countries.includes(item.country));
   $("#s-univ-menu").innerHTML = institutions.map(item => `<label><input class="s-univ-option" type="checkbox" value="${esc(item.name)}" ${previouslySelected.has(item.name) ? "checked" : ""}> ${flag(item.country)} ${esc(item.name)}</label>`).join("")
     || `<span class="muted">No institutions for the selected countries</span>`;
-  document.querySelectorAll(".s-univ-option").forEach(input => input.onchange = () =>
-    multiSummary("#s-univ-summary", checkedValues(".s-univ-option"), "All institutions"));
+  document.querySelectorAll(".s-univ-option").forEach(input => input.onchange = () => {
+    multiSummary("#s-univ-summary", checkedValues(".s-univ-option"), "All institutions");
+    updateSearchMode();
+  });
   multiSummary("#s-univ-summary", checkedValues(".s-univ-option"), "All institutions");
+  updateSearchMode();
 }
 async function loadSearchFacets() {
   if (searchFacets) return;
@@ -1532,11 +1536,22 @@ $("#btn-search-reset").onclick = () => {
 $("#btn-search").onclick = doSearch;
 $("#s-query").addEventListener("keydown", e => { if (e.key === "Enter") doSearch(); });
 $("#s-query").addEventListener("input", () => {
+  updateSearchMode();
   if (!selectedSearchPills.length) return;
   selectedSearchPills = [];
   renderSearchHistory();
 });
 let searchLoading = false;
+function updateSearchMode() {
+  const hasQuery = Boolean($("#s-query").value.trim());
+  const browsing = !hasQuery && checkedValues(".s-univ-option").length > 0;
+  $("#s-min-score").disabled = !hasQuery;
+  $("#s-sort option[value='relevance']").textContent = hasQuery ? "relevance" : "catalog order (ID)";
+  if (!searchLoading) $("#btn-search").textContent = browsing ? "Browse selected institutions" : "Search";
+  $("#btn-search").title = browsing
+    ? "List indexed opportunities at the selected institutions, with safety and structured filters but no semantic threshold"
+    : "Enter a semantic query, or select institutions and leave the query empty to browse";
+}
 function setSearchLoading(active) {
   searchLoading = active;
   const button = $("#btn-search");
@@ -1545,6 +1560,7 @@ function setSearchLoading(active) {
   button.innerHTML = active ? `<span class="spinner" aria-hidden="true"></span> Searching…` : "Search";
   $("#search").classList.toggle("search-loading", active);
   $("#search").setAttribute("aria-busy", String(active));
+  if (!active) updateSearchMode();
 }
 function reportControls(hit) {
   const feedback = positionFeedback(hit.position_id);
@@ -1604,7 +1620,7 @@ function renderSearchResult(result) {
       <div class="hit-heading"><div>
         <div class="hit-title"><a href="${esc(h.url)}" target="_blank" rel="noopener" onclick="markResultViewed(${h.position_id},'source')">${esc(h.title)}</a></div>
         <div class="hit-badges">${newOpportunityBadge(h)} ${verificationBadge(h)} ${uncertaintyBadges(h)} ${familySignalBadge(h)} <span class="view-marker">${resultViewBadge(h.position_id)}</span></div>
-      </div><div class="hit-tools"><span class="score" title="Semantic relevance score">${h.score.toFixed(3)}</span>${saveButton(h)}</div></div>
+      </div><div class="hit-tools"><span class="score" title="${h.score == null ? "Institution browse — no semantic relevance score" : "Semantic relevance score"}">${h.score == null ? "—" : h.score.toFixed(3)}</span>${saveButton(h)}</div></div>
       <div class="meta">${esc(h.university)} · ${flag(h.country)} ${esc(h.country || "—")}
         · ${esc(positionTypeLabel(h.position_type))}
         · ${esc(opportunityKindLabel(h.opportunity_kind))}
@@ -1654,13 +1670,17 @@ async function doSearch() {
   $("#s-msg").textContent = "";
   if (searchLoading) return;
   const q = $("#s-query").value.trim();
-  if (!q) { $("#s-msg").textContent = "Enter a semantic query first."; $("#s-query").focus(); return; }
+  const universities = checkedValues(".s-univ-option");
+  if (!q && !universities.length) {
+    $("#s-msg").textContent = "Enter a semantic query or select at least one institution to browse.";
+    $("#s-query").focus(); return;
+  }
   const body = {
     query: q,
     mode: $("#s-mode").value,
     max_uncertainty: $("#s-max-uncertainty").value ? +$("#s-max-uncertainty").value : null,
     countries: checkedValues(".s-country-option"),
-    universities: checkedValues(".s-univ-option"),
+    universities,
     position_types: checkedValues(".s-type-option"),
     deadline_after: $("#s-deadline-from").value || null,
     deadline_before: $("#s-deadline-to").value || null,
@@ -1676,9 +1696,9 @@ async function doSearch() {
   $("#s-msg").innerHTML = `<span class="loading-indicator"><span class="spinner" aria-hidden="true"></span>Searching indexed opportunities…</span>`;
   try {
     const result = await api("/v1/search", {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(body)});
-    $("#s-msg").textContent = "";
+    $("#s-msg").textContent = q ? "" : "Institution browse: no semantic threshold or relevance scores. All other filters apply.";
     lastSearchBody = body;
-    rememberSearch(q);
+    if (q) rememberSearch(q);
     $("#btn-export").disabled = false;
     $("#btn-macro-save").disabled = false;
     renderSearchResult(result);
@@ -1812,6 +1832,7 @@ async function scheduleMacro(id) {
 window.scheduleMacro = scheduleMacro;
 
 // boot
+updateSearchMode();
 let rememberedTab = "";
 try { rememberedTab = localStorage.getItem(TAB_KEY) || ""; } catch {}
 const requestedTab = location.hash.slice(1);

@@ -1,7 +1,9 @@
 """Structured adapters for official job boards that HTML extraction cannot see.
 
-The adapter configuration lives inside ``ListingPage.extraction_schema`` so it
-is durable, auditable and can use the normal scrape checkpoints/retry logic.
+Adapter configuration normally lives inside ``ListingPage.extraction_schema``.
+The two audited Copenhagen table URLs also have a deterministic raw-HTML path
+so existing schemas benefit without a database rewrite. Both paths use the
+normal scrape checkpoints/retry logic.
 Adapters return the same raw item contract as Crawl4AI; normalization and
 deduplication therefore remain centralized in :mod:`pipeline.normalize`.
 """
@@ -15,20 +17,25 @@ from typing import cast
 from urllib.parse import urljoin, urlsplit
 
 import httpx
+from bs4 import BeautifulSoup
 
 from phd_searcher.pipeline.normalize import extract_terms, parse_compensation
 
 _TALENTLINK = "talentlink"
 _TALENTADORE = "talentadore"
+_COPENHAGEN_LISTINGS = frozenset(
+    {
+        "https://employment.ku.dk/phd/",
+        "https://employment.ku.dk/all-vacancies/",
+    }
+)
 SUPPORTED_SOURCE_ADAPTERS = frozenset({_TALENTLINK, _TALENTADORE})
 _ALLOWED_ADAPTER_HOSTS: dict[str, frozenset[str]] = {
     _TALENTLINK: frozenset({"recruitmentplatform.com"}),
     _TALENTADORE: frozenset({"ats.talentadore.com"}),
 }
 _MIN_ACCEPTED_RATIO = 0.9
-_TALENTLINK_SALARY_RANGE = re.compile(
-    r"^\s*(?P<minimum>\d{4,})\s+(?P<maximum>\d{4,})(?P<suffix>\s+\D.*)?$"
-)
+_TALENTLINK_SALARY_RANGE = re.compile(r"^\s*(?P<minimum>\d{4,})\s+(?P<maximum>\d{4,})(?P<suffix>\s+\D.*)?$")
 
 
 class _PlainTextParser(HTMLParser):
@@ -59,11 +66,7 @@ def _plain_text(value: object) -> str:
         return ""
     parser = _PlainTextParser()
     parser.feed(value)
-    return "\n".join(
-        line.strip()
-        for line in "".join(parser.parts).splitlines()
-        if line.strip()
-    )
+    return "\n".join(line.strip() for line in "".join(parser.parts).splitlines() if line.strip())
 
 
 def _schema_string(schema: dict[str, object], key: str) -> str:
@@ -97,9 +100,7 @@ def _jobs(payload: object, adapter: str) -> list[object]:
 
 def _validate_acceptance(adapter: str, raw_count: int, accepted_count: int) -> None:
     if raw_count and accepted_count / raw_count < _MIN_ACCEPTED_RATIO:
-        raise RuntimeError(
-            f"{adapter} response shape changed: accepted {accepted_count}/{raw_count} jobs"
-        )
+        raise RuntimeError(f"{adapter} response shape changed: accepted {accepted_count}/{raw_count} jobs")
 
 
 def _talentlink_salary(value: object) -> str:
@@ -135,11 +136,7 @@ def normalize_source_item_formats(
     raw_formats = (schema or {}).get("dateFormats")
     if not isinstance(raw_formats, dict):
         return items
-    formats = {
-        key: value
-        for key, value in raw_formats.items()
-        if isinstance(key, str) and isinstance(value, str)
-    }
+    formats = {key: value for key, value in raw_formats.items() if isinstance(key, str) and isinstance(value, str)}
     normalized: list[dict[str, object]] = []
     for item in items:
         updated = dict(item)
@@ -149,9 +146,7 @@ def normalize_source_item_formats(
                 continue
             token = raw_value.strip().split(maxsplit=1)[0]
             try:
-                updated[f"__phdbot_{field}_date"] = (
-                    datetime.strptime(token, date_format).date().isoformat()
-                )
+                updated[f"__phdbot_{field}_date"] = datetime.strptime(token, date_format).date().isoformat()
             except ValueError:
                 # Preserve the evidence for the generic multilingual parser.
                 continue
@@ -196,10 +191,7 @@ def talentlink_items(
             continue
         url = str(fields.get("applicationUrl") or "").strip()
         if not url:
-            url = (
-                f"{api_host}/apply-app/pages/application-form"
-                f"?jobId={tech_id}-{job_id}&langCode={language}"
-            )
+            url = f"{api_host}/apply-app/pages/application-form?jobId={tech_id}-{job_id}&langCode={language}"
         else:
             url = urljoin(f"{api_host}/", url)
         sections: list[str] = []
@@ -215,9 +207,7 @@ def talentlink_items(
         description = "\n\n".join(sections)
         inferred_compensation, inferred_duration, _ = extract_terms(description)
         department_values = [
-            str(fields.get(key) or "").strip()
-            for key in department_fields
-            if isinstance(key, str) and fields.get(key)
+            str(fields.get(key) or "").strip() for key in department_fields if isinstance(key, str) and fields.get(key)
         ]
         compensation = _talentlink_salary(fields.get(salary_field)) or inferred_compensation
         salary_currency = str(schema.get("salaryCurrency") or "").strip().upper()
@@ -277,11 +267,7 @@ def talentadore_items(payload: object, *, base_url: str = "") -> list[dict[str, 
                 "area": unit,
                 "research_group": unit,
                 "deadline": str(raw_job.get("due_date") or ""),
-                "published": str(
-                    raw_job.get("published_at")
-                    or raw_job.get("start_date")
-                    or ""
-                ),
+                "published": str(raw_job.get("published_at") or raw_job.get("start_date") or ""),
                 "compensation": compensation or "",
                 "duration": duration or "",
                 "language": "en",
@@ -291,14 +277,74 @@ def talentadore_items(payload: object, *, base_url: str = "") -> list[dict[str, 
     return items
 
 
+def copenhagen_items(html: str, source_url: str) -> list[dict[str, object]]:
+    """Read the complete server table before DataTables detaches hidden pages.
+
+    A missing/changed table is a failure, not an empty successful refresh that
+    could age out existing jobs. Only the two audited official listings use
+    this path; no generic JavaScript or table heuristics are introduced.
+    """
+    if source_url not in _COPENHAGEN_LISTINGS:
+        raise RuntimeError("untrusted Copenhagen listing URL")
+    soup = BeautifulSoup(html, "html.parser")
+    table = soup.select_one("table.vacancies")
+    if table is None:
+        raise RuntimeError("Copenhagen vacancy table missing")
+    headers = [cell.get_text(" ", strip=True).casefold() for cell in table.select("thead th")]
+    if headers != ["title", "faculty", "location", "deadline"]:
+        raise RuntimeError("Copenhagen vacancy table columns changed")
+    items: list[dict[str, object]] = []
+    rows = table.select("tbody tr")
+    for row in rows:
+        cells = row.find_all("td", recursive=False)
+        link = cells[0].find("a", href=True) if len(cells) == 4 else None
+        if link is None:
+            raise RuntimeError("Copenhagen malformed vacancy row")
+        title = link.get_text(" ", strip=True)
+        url = urljoin(source_url, str(link.get("href")))
+        parsed = urlsplit(url)
+        if (
+            not title
+            or parsed.scheme != "https"
+            or parsed.netloc != "employment.ku.dk"
+            or not re.fullmatch(r"show=\d+", parsed.query)
+        ):
+            raise RuntimeError("Copenhagen invalid vacancy link")
+        deadline = cells[3].get_text(" ", strip=True)
+        try:
+            normalized_deadline = datetime.strptime(deadline, "%d-%m-%Y").date().isoformat()
+        except ValueError as exc:
+            raise RuntimeError("Copenhagen invalid deadline") from exc
+        items.append(
+            {
+                "title": title,
+                "url": url,
+                "area": cells[1].get_text(" ", strip=True),
+                "research_group": cells[2].get_text(" ", strip=True),
+                "deadline": deadline,
+                "__phdbot_deadline_date": normalized_deadline,
+            }
+        )
+    return items
+
+
 async def fetch_source_adapter(
     schema: dict[str, object],
     *,
     page_number: int,
+    source_url: str | None = None,
 ) -> list[dict[str, object]] | None:
     """Fetch one durable scrape page, or ``None`` for ordinary HTML sources."""
 
     adapter = source_adapter_name(schema)
+    if adapter is None and source_url in _COPENHAGEN_LISTINGS:
+        if page_number > 0:
+            return []  # All client-side pages are in the first HTML response.
+        assert source_url is not None
+        async with httpx.AsyncClient(timeout=60, follow_redirects=False) as client:
+            response = await client.get(source_url)
+            response.raise_for_status()
+            return copenhagen_items(response.text, source_url)
     if adapter is None:
         return None
     async with httpx.AsyncClient(timeout=60, follow_redirects=False) as client:

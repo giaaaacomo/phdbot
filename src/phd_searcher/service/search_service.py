@@ -13,6 +13,7 @@ from typing import cast
 import httpx
 from injector import inject
 from qdrant_client import AsyncQdrantClient
+from qdrant_client.conversions.common_types import PointId
 from qdrant_client.models import (
     Condition,
     DatetimeRange,
@@ -23,6 +24,7 @@ from qdrant_client.models import (
     MatchValue,
     PayloadField,
     Range,
+    Record,
     ScoredPoint,
 )
 
@@ -182,8 +184,8 @@ class SearchService:
         self._collection = config.collection
 
     async def search(self, body: SearchBody) -> SearchResult:
-        queries = normalized_retrieval_queries(body.query)
-        vectors = await self._model.embed_queries(queries)
+        queries = normalized_retrieval_queries(body.query) if body.query else []
+        vectors = await self._model.embed_queries(queries) if queries else []
         must: list[Condition] = []
         must_not: list[Condition] = []
         # The vector collection can lag behind a fresh deadline/index cleanup.
@@ -256,12 +258,13 @@ class SearchService:
                     key="published_ts",
                 )
             )
-        count = (await self._qdrant.count(self._collection, exact=True)).count
-        if count == 0:
+        query_filter = Filter(must=must, must_not=must_not)
+        count = (await self._qdrant.count(self._collection, exact=True)).count if body.query else 0
+        if body.query and count == 0:
             return SearchResult(hits=[], total=0)
         institutions: list[InstitutionHit] = []
         institution_collection = f"{self._collection}_institutions"
-        if await self._qdrant.collection_exists(institution_collection):
+        if body.query and await self._qdrant.collection_exists(institution_collection):
             institution_must: list[FieldCondition] = []
             if countries:
                 institution_must.append(FieldCondition(key="country", match=MatchAny(any=countries)))
@@ -293,19 +296,38 @@ class SearchService:
                 )
                 for point in institution_points
             ]
-        responses = await asyncio.gather(
-            *(
-                self._qdrant.query_points(
-                    self._collection,
-                    query=vector,
-                    limit=count,
-                    score_threshold=body.min_score,
-                    query_filter=(Filter(must=list(must), must_not=list(must_not)) if must or must_not else None),
+        points: list[Record | ScoredPoint] = []
+        if body.query:
+            responses = await asyncio.gather(
+                *(
+                    self._qdrant.query_points(
+                        self._collection,
+                        query=vector,
+                        limit=count,
+                        score_threshold=body.min_score,
+                        query_filter=query_filter,
+                    )
+                    for vector in vectors
                 )
-                for vector in vectors
             )
-        )
-        points = _fuse_points(response.points for response in responses)
+            points.extend(_fuse_points(response.points for response in responses))
+        else:
+            # Browsing uses the identical safety/structured filters, never a
+            # dummy vector. Read every page before post-filters, sorting and the
+            # optional display limit so that total remains the matching count.
+            offset: PointId | None = None
+            while True:
+                page, offset = await self._qdrant.scroll(
+                    self._collection,
+                    scroll_filter=query_filter,
+                    limit=256,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                points.extend(page)
+                if offset is None:
+                    break
         hits: list[SearchHit] = []
         for point in points:
             payload = point.payload or {}
@@ -321,7 +343,7 @@ class SearchService:
             hits.append(
                 SearchHit(
                     position_id=int(point.id),
-                    score=point.score,
+                    score=point.score if isinstance(point, ScoredPoint) else None,
                     title=str(payload.get("title", "")),
                     university=str(payload.get("university", "")),
                     country=str(payload.get("country", "")),
@@ -378,8 +400,10 @@ class SearchService:
                 if hit.compensation_eur_max is None or hit.compensation_eur_max >= body.compensation_min
             ]
         if body.sort_by == "relevance":
+            # Without semantic scores, the existing relevance/default option
+            # means stable catalog-ID order, respecting the chosen direction.
             hits.sort(
-                key=lambda hit: hit.score,
+                key=lambda hit: hit.score if hit.score is not None else hit.position_id,
                 reverse=body.sort_order == "desc",
             )
         else:

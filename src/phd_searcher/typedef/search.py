@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from phd_searcher.countries import country_code
 from phd_searcher.engine.search_query import split_combined_query
@@ -21,7 +21,8 @@ SourceFamilySignal = Literal["supports_opportunity", "supports_non_opportunity"]
 
 
 class SearchBody(BaseModel):
-    query: str = Field(min_length=1, max_length=500)
+    # Empty queries browse only explicitly selected institutions, without embeddings.
+    query: str = Field(default="", max_length=500)
     mode: SearchMode = "verified_only"
     # Heuristic audit score, not a calibrated probability. ``None`` keeps all
     # results allowed by ``mode``; 0 is equivalent to fully verified only.
@@ -36,6 +37,7 @@ class SearchBody(BaseModel):
     posted_after: date | None = None
     posted_before: date | None = None
     compensation_min: float | None = Field(default=None, ge=0)
+    # Semantic queries only; institution browsing has no relevance score.
     min_score: float = Field(default=0.6, ge=-1, le=1)
     sort_by: Literal[
         "relevance",
@@ -52,8 +54,25 @@ class SearchBody(BaseModel):
     @classmethod
     def validate_query(cls, value: str) -> str:
         value = value.strip()
-        split_combined_query(value)
+        if value:
+            split_combined_query(value)
         return value
+
+    @field_validator("university")
+    @classmethod
+    def normalize_university(cls, value: str | None) -> str | None:
+        return (value.strip() or None) if value is not None else None
+
+    @field_validator("universities")
+    @classmethod
+    def normalize_universities(cls, value: list[str]) -> list[str]:
+        return list(dict.fromkeys(name for item in value if (name := item.strip())))
+
+    @model_validator(mode="after")
+    def require_query_or_institution(self) -> SearchBody:
+        if not self.query and not (self.university or self.universities):
+            raise ValueError("enter a semantic query or select at least one institution to browse")
+        return self
 
     @field_validator("country", mode="before")
     @classmethod
@@ -86,7 +105,8 @@ class SearchBody(BaseModel):
 
 class SearchHit(BaseModel):
     position_id: int
-    score: float
+    # None for filtered institution browsing, where no embedding is computed.
+    score: float | None
     title: str
     university: str
     country: str
