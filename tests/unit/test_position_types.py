@@ -1,4 +1,43 @@
+import pytest
+
 from phd_searcher.position_types import classify_position
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "PhD fellowship in Biomolecular Native Mass Spectrometry",
+        "Ph.D. scholarship in Interaction Design",
+        "Fully funded doctoral studentship on human-AI interaction",
+        "Predoctoral fellowship at a robotics laboratory",
+    ],
+)
+def test_subject_qualified_doctoral_funding_offer_is_phd(title):
+    assert classify_position(title) == "phd"
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "PhD scholarships",
+        "Kingston University PhD studentships",
+        "Conference travel grants for doctoral researchers",
+        "How to apply for a PhD fellowship in biology",
+        "PhD fellowship",
+        "PhD fellowship for travel to a conference",
+        "Scholarships for PhD candidates",
+    ],
+)
+def test_doctoral_funding_directories_and_travel_are_not_promoted(title):
+    assert classify_position(title) == "research_fellowship"
+
+
+def test_doctoral_offer_rule_does_not_override_explicit_or_other_specific_roles():
+    title = "PhD fellowship in biology"
+    assert classify_position(title, explicit="research_fellowship") == "research_fellowship"
+    assert classify_position("Postdoctoral fellowship in biology") == "postdoc"
+    assert classify_position("Research Internship: PhD fellowship in biology") == "internship"
+    assert classify_position("Funding opportunities", title) == "research_fellowship"
 
 
 def test_program_director_is_faculty_not_master_program():
@@ -56,12 +95,7 @@ def test_research_associates_and_conference_grants_are_first_class_types():
 
 
 def test_integrative_teaching_contracts_are_faculty_positions():
-    assert (
-        classify_position(
-            "Avviso per 36 contratti integrativi di insegnamenti ufficiali"
-        )
-        == "faculty"
-    )
+    assert classify_position("Avviso per 36 contratti integrativi di insegnamenti ufficiali") == "faculty"
 
 
 def test_predoctoral_scholarships_remain_phd_positions():

@@ -17,6 +17,15 @@ POSITION_TYPES: dict[str, str] = {
     "other": "Other opportunity",
 }
 
+# A singular, subject-qualified doctoral offer is more specific than its
+# funding mechanism. Do not match generic plural funding directories, travel
+# grants for PhD students, or mentions buried in shared description text.
+_DOCTORAL_FELLOWSHIP_TITLE = re.compile(
+    r"^(?:(?:fully[ -])?funded\s+)?(?:Ph\.?D\.?|(?:pre[- ]?)?doctoral)\s+"
+    r"(?:fellowship|scholarship|studentship)\s+(?:in|on|at|within)\s+\S",
+    re.I,
+)
+
 _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("postdoc", re.compile(r"\bpost[ -]?doc(?:toral)?\b|\bpostdottor", re.I)),
     (
@@ -88,6 +97,8 @@ def classify_position(title: str, description: str = "", explicit: str | None = 
     # Il titolo è più affidabile del testo pagina, che spesso include menu e
     # descrizioni di corsi non collegati al tipo di contratto della vacancy.
     title_kind = next((kind for kind, pattern in _PATTERNS if pattern.search(title)), None)
+    if title_kind == "research_fellowship" and _DOCTORAL_FELLOWSHIP_TITLE.match(title.strip()):
+        return "phd"
     if title_kind:
         return title_kind
     return next((kind for kind, pattern in _PATTERNS if pattern.search(description)), "other")

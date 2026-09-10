@@ -73,6 +73,42 @@ def test_negative_family_prior_marks_probable_uncertainty_without_rejecting() ->
     assert payload == ("supports_non_opportunity", 20)
 
 
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("PhD fellowship in Biomolecular Native Mass Spectrometry", True),
+        ("PhD scholarships", False),
+        ("Kingston University PhD studentships", False),
+        ("Conference travel grants for doctoral researchers", False),
+    ],
+)
+def test_doctoral_fellowship_title_gate_keeps_directories_out(title, expected):
+    position = _position(
+        103345,
+        UNKNOWN,
+        title=title,
+        screening_status="pending",
+        position_type="research_fellowship",
+        listing_page_id=3763,
+    )
+    source = ListingPage(
+        id=3763,
+        university_id=1,
+        url="https://employment.ku.dk/all-vacancies/",
+        quality_status="healthy",
+        schema_status="ok",
+        source="funnel",
+    )
+    assert is_provisional_eligible(position, listing_page=source, today=date(2026, 9, 10)) is expected
+    if expected:
+        metadata = _verification_metadata(position, date(2026, 9, 10), listing_page=source)
+        assert metadata is not None
+        assert metadata[0] == "probable"
+        assert metadata[2] == 60
+        position.deadline = date(2026, 9, 9)
+        assert not is_provisional_eligible(position, listing_page=source, today=date(2026, 9, 10))
+
+
 async def test_observation_timestamps_sync_without_reembedding(
     qdrant: AsyncQdrantClient,
 ) -> None:
@@ -178,7 +214,6 @@ def test_position_index_query_preserves_verified_and_adds_coarse_provisional_can
     assert "positions.screening_status IN ('pending', 'review', 'eligible')" in cleanup_sql
 
 
-
 def test_provisional_gate_accepts_current_rule_clean_candidate() -> None:
     position = _position(
         1,
@@ -229,10 +264,13 @@ def test_provisional_gate_exposes_strong_title_as_labelled_high_recall_lead() ->
         60,
         ("open_status", "details"),
     )
-    assert _provisional_gate_decision(
-        position,
-        today=date(2026, 8, 9),
-    ).reason == "strong_role_title"
+    assert (
+        _provisional_gate_decision(
+            position,
+            today=date(2026, 8, 9),
+        ).reason
+        == "strong_role_title"
+    )
 
 
 def test_provisional_gate_keeps_conflicting_euraxess_status_as_uncertain_lead() -> None:
@@ -317,10 +355,7 @@ def test_manual_positive_is_verified() -> None:
 
 
 def test_grounded_evidence_positive_is_verified() -> None:
-    quote = (
-        "Applications are now open for this PhD position in robotics; "
-        "the application deadline is 31 December 2026."
-    )
+    quote = "Applications are now open for this PhD position in robotics; the application deadline is 31 December 2026."
     position = _position(
         20,
         VACANCY,
@@ -487,10 +522,7 @@ def test_audited_euraxess_item_exposes_untriaged_card_as_labelled_lead() -> None
     listing = ListingPage(
         id=9,
         university_id=None,
-        url=(
-            "https://euraxess.ec.europa.eu/jobs/search?"
-            "f%5B0%5D=job_research_profile%3A447"
-        ),
+        url=("https://euraxess.ec.europa.eu/jobs/search?f%5B0%5D=job_research_profile%3A447"),
         kind="aggregator",
         source="seed",
         schema_status="ok",
@@ -567,11 +599,14 @@ def test_euraxess_exception_does_not_override_explicit_closure() -> None:
         quality_status="healthy",
     )
 
-    assert _provisional_gate_decision(
-        position,
-        listing_page=listing,
-        today=date(2026, 8, 9),
-    ).reason == "explicit_closure_or_nonopportunity"
+    assert (
+        _provisional_gate_decision(
+            position,
+            listing_page=listing,
+            today=date(2026, 8, 9),
+        ).reason
+        == "explicit_closure_or_nonopportunity"
+    )
 
 
 @pytest.mark.parametrize(
@@ -630,11 +665,7 @@ def test_euraxess_status_conflict_keeps_current_xr_candidates_as_uncertain(
         full_description=full_description,
         deadline=deadline,
         position_type=(
-            "postdoc"
-            if position_id == 4998
-            else "research_fellowship"
-            if position_id in {1210, 6591}
-            else "phd"
+            "postdoc" if position_id == 4998 else "research_fellowship" if position_id in {1210, 6591} else "phd"
         ),
         review_state="resolved",
     )
@@ -749,11 +780,14 @@ def test_provisional_gate_does_not_promote_portal_noise(position: Position) -> N
         listing_page=listing,
         today=date(2026, 8, 9),
     )
-    assert _provisional_gate_decision(
-        position,
-        listing_page=listing,
-        today=date(2026, 8, 9),
-    ).assessment is None
+    assert (
+        _provisional_gate_decision(
+            position,
+            listing_page=listing,
+            today=date(2026, 8, 9),
+        ).assessment
+        is None
+    )
 
 
 @pytest.mark.parametrize("title", ["Administrative Vacancies", "Operational Vacancies"])
@@ -767,8 +801,7 @@ def test_provisional_gate_does_not_rescue_category_heading_from_shared_listing_t
         screening_status="review",
         title=title,
         description=(
-            "Applications are now open for a neighbouring doctoral researcher "
-            "position. Apply by 30 September 2026."
+            "Applications are now open for a neighbouring doctoral researcher position. Apply by 30 September 2026."
         ),
     )
     listing = ListingPage(
@@ -935,11 +968,11 @@ async def test_upsert_derives_only_provisional_metadata_and_preserves_confidence
     provisional.scraped_at = datetime(2026, 8, 9)
     verified.scraped_at = datetime(2026, 8, 9)
     embed_documents = AsyncMock(
-            return_value=[
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-            ]
-        )
+        return_value=[
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+        ]
+    )
     model = SimpleNamespace(
         embed_documents=embed_documents,
         search_index_contract=lambda: "candidate-compact-v2|raw-v1|test/model",
@@ -975,9 +1008,7 @@ async def test_upsert_derives_only_provisional_metadata_and_preserves_confidence
     assert payload_by_id[21]["uncertainty_flags"] == []
     assert payload_by_id[21]["position_type"] == "other"
     assert payload_by_id[21]["opportunity_kind"] == PROGRAMME
-    assert payload_by_id[20]["_phdbot_search_index_contract"] == (
-        "candidate-compact-v2|raw-v1|test/model"
-    )
+    assert payload_by_id[20]["_phdbot_search_index_contract"] == ("candidate-compact-v2|raw-v1|test/model")
     embedded_documents = embed_documents.await_args.args[0]
     assert "Position type: internship" in embedded_documents[0]
     assert "Position type: other" in embedded_documents[1]
@@ -1022,19 +1053,11 @@ def test_spontaneous_opportunities_feed_institutions_without_counting_as_positio
     assert by_name["Curated University"]["active_positions"] == 1
     assert by_name["Curated University"]["spontaneous_application_url"] == curated_url
     assert by_name["Fallback University"]["active_positions"] == 0
-    assert by_name["Fallback University"]["spontaneous_application_url"] == (
-        "https://opportunity.example/14"
-    )
+    assert by_name["Fallback University"]["spontaneous_application_url"] == ("https://opportunity.example/14")
     assert by_name["Mixed Lab"]["active_positions"] == 1
-    assert by_name["Mixed Lab"]["spontaneous_application_url"] == (
-        "https://opportunity.example/11"
-    )
+    assert by_name["Mixed Lab"]["spontaneous_application_url"] == ("https://opportunity.example/11")
     assert by_name["Open Lab"]["active_positions"] == 0
-    assert by_name["Open Lab"]["spontaneous_application_url"] == (
-        "https://opportunity.example/12"
-    )
+    assert by_name["Open Lab"]["spontaneous_application_url"] == ("https://opportunity.example/12")
     assert by_name["Independent Institute"]["kind"] == "institution"
     assert by_name["Independent Institute"]["active_positions"] == 0
-    assert by_name["Independent Institute"]["spontaneous_application_url"] == (
-        "https://opportunity.example/15"
-    )
+    assert by_name["Independent Institute"]["spontaneous_application_url"] == ("https://opportunity.example/15")

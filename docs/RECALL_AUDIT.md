@@ -114,3 +114,28 @@ It reads all rows in one request, validates table columns, vacancy links and day
 and fails rather than treating malformed/blocked responses as empty successful refreshes. No new
 LLM calls, generic table heuristics or database schema changes are involved. Other institutional
 JavaScript-paginated tables still need independent audit; this fix is not a global completeness claim.
+
+### September 10: doctoral fellowships versus generic grants
+
+The Copenhagen canary acquired the missing fellowship but initially did not publish it:
+the generic `fellowship` pattern took precedence over `PhD`. A narrow title-only rule now
+recognizes singular, subject-qualified offers such as `PhD fellowship in ...`,
+`doctoral studentship on ...` and `PhD scholarship at ...` as doctoral positions.
+Explicit classifications still take precedence; descriptions do not activate this exception.
+Plural funding directories, conference/travel grants and generic scholarships retain their
+existing types. Tests also verify that expired offers remain excluded and eligible title-only
+leads are merely probable (60% heuristic uncertainty), not automatically verified.
+
+The first historical repair was restricted to 20 active, future-deadline, pending Copenhagen
+rows classified by rules, after a full PostgreSQL dump was successfully restored in an isolated
+temporary database. Only type and indexing invalidation were changed; no review verdict,
+deadline, manual decision or observation timestamp was altered. These are records, not
+necessarily distinct opportunities: duplicates across `/phd/` and `/all-vacancies/` remain a
+separate identity issue. The narrow classifier applies to new collection automatically;
+other historical institutions have not been relabelled by this canary.
+
+Index-only canary #100 then published 21 Copenhagen records in 51.5 seconds. The target
+fellowship was found by both institution + PhD browsing and semantic search for its subject
+(score 0.778 at threshold 0.6). It remains explicitly probable rather than verified. This
+closes the observed acquisition → type → index → retrieval path for that example, not the
+remaining cross-institution benchmark gaps.
