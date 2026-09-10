@@ -42,7 +42,7 @@ def test_specialist_query_has_conservative_quality_gates() -> None:
     assert "wd:Q184644" in rendered
 
 
-def test_research_organization_query_requires_research_class_ror_and_reputation() -> None:
+def test_research_organization_query_requires_identity_not_wikipedia_popularity() -> None:
     assert {"Q31855", "Q7315155"} <= _RESEARCH_ORG_CLASSES.keys()
     rendered = _RESEARCH_ORGS_QUERY.format(
         qid="Q38",
@@ -50,7 +50,9 @@ def test_research_organization_query_requires_research_class_ror_and_reputation(
     )
     assert "wdt:P31/wdt:P279* ?researchClass" in rendered
     assert "wdt:P6782 ?ror" in rendered
-    assert "?sitelinks >= 2" in rendered
+    assert "?sitelinks >= 2" not in rendered
+    assert "OPTIONAL { ?u wikibase:sitelinks ?count }" in rendered
+    assert "COALESCE(?count, 0)" in rendered
     assert "wd:Q38" in rendered
 
 

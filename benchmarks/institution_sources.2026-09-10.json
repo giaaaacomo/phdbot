@@ -1,0 +1,48 @@
+{
+  "observed_on": "2026-09-10",
+  "purpose": "Identity and discovery regression sample; not an automatic import list or a recall estimate",
+  "institutions": [
+    {
+      "name_on_official_site": "International Research Laboratory on Artificial Intelligence",
+      "acronym": "IPAL",
+      "official_site": "https://ipal.cnrs.fr/",
+      "identity_api": "https://api.ror.org/v2/organizations/00m3mb357",
+      "ror_id": "https://ror.org/00m3mb357",
+      "wikidata_id_from_ror": "Q51781972",
+      "name_in_ror": "Image and Pervasive Access Laboratory",
+      "aliases_in_ror": ["IPAL", "IRL 2955", "IRL2955"],
+      "status_in_ror": "active",
+      "types_in_ror": ["facility"],
+      "headquarters_countries_in_ror": ["SG"],
+      "relationships_in_ror": [
+        {"type": "parent", "id": "https://ror.org/02feahw73", "label": "Centre National de la Recherche Scientifique"}
+      ],
+      "partner_evidence_url": "https://ipal.cnrs.fr/about-us/",
+      "partners_named_by_official_site": ["CNRS", "NUS", "A*STAR", "University of Toulouse", "Cergy Paris University", "Grenoble-Alpes University"],
+      "network_directory": "https://gdr-ihm.cnrs.fr/laboratoires/",
+      "present_in_phdbot_catalog": false,
+      "candidate_opportunity": {
+        "title": "PhD Position: Assistive Micro-Drones for People with Visual Impairments",
+        "source": "https://ipal.cnrs.fr/",
+        "reported_location": "IRIT, Université de Toulouse, France",
+        "application_status": "not_yet_verified"
+      },
+      "caveats": [
+        "ROR relationships do not enumerate all partners named by the official site; absence is not a negative assertion.",
+        "Current catalog only queries European headquarters and requires Wikidata; a cross-border affiliation route is not yet implemented.",
+        "Direct Python HTTPS access failed certificate verification; do not disable TLS verification.",
+        "Direct Wikidata entity retrieval returned HTTP 403; its current statements were not verified."
+      ]
+    }
+  ],
+  "discovery_controls": [
+    {
+      "website": "https://statml.io/",
+      "expected_candidate": "https://statml.io/admissions/specific-projects/",
+      "observed_path": ["https://statml.io/", "https://statml.io/admissions/", "https://statml.io/admissions/specific-projects/"],
+      "generic_candidate_found_without_curated_sources": true,
+      "scope_of_check": "Real HTML links through generic hub and candidate functions; final LLM selection and Imperial-to-StatML affiliation discovery not tested",
+      "sitemap_observation": "sitemap.xml redirects to wp-sitemap.xml, which returned HTTP 501; hub fallback found the candidate"
+    }
+  ]
+}

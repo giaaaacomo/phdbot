@@ -41,7 +41,7 @@ _MONTH_ALIASES: dict[int, tuple[str, ...]] = {
     12: ("dec", "december", "dezember", "decembre", "dicembre", "diciembre", "dezembro"),
 }
 _DEADLINE_CONTEXT_RE = re.compile(
-    r"(?:application deadline|submission deadline|registration deadline|closing date|"
+    r"(?:application deadline|submission deadline|registration deadline|expression[- ]of[- ]interest deadline|closing date|"
     r"application portal.{0,160}\bcloses?|apply(?:ing)?\s+(?:no later than|by)|open (?:until|till)|"
     r"applications?\s+(?:close|until|between)|scadenza|termine.{0,40}(?:domand|candidatur)|"
     r"bewerbungsfrist|bewerbung(?:en)?.{0,160}\bbis(?:\s+zum)?|"

@@ -19,6 +19,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from bs4 import BeautifulSoup
 
+from phd_searcher.pipeline.departmental_sources import DEPARTMENTAL_URLS, departmental_items
 from phd_searcher.pipeline.normalize import extract_terms, parse_compensation
 
 _TALENTLINK = "talentlink"
@@ -29,7 +30,7 @@ _COPENHAGEN_LISTINGS = frozenset(
         "https://employment.ku.dk/all-vacancies/",
     }
 )
-SUPPORTED_SOURCE_ADAPTERS = frozenset({_TALENTLINK, _TALENTADORE})
+SUPPORTED_SOURCE_ADAPTERS = frozenset({_TALENTLINK, _TALENTADORE, "departmental"})
 _ALLOWED_ADAPTER_HOSTS: dict[str, frozenset[str]] = {
     _TALENTLINK: frozenset({"recruitmentplatform.com"}),
     _TALENTADORE: frozenset({"ats.talentadore.com"}),
@@ -337,6 +338,16 @@ async def fetch_source_adapter(
     """Fetch one durable scrape page, or ``None`` for ordinary HTML sources."""
 
     adapter = source_adapter_name(schema)
+    if adapter == "departmental":
+        if source_url not in DEPARTMENTAL_URLS:
+            raise RuntimeError("untrusted departmental source URL")
+        if page_number > 0:
+            return []
+        assert source_url is not None
+        async with httpx.AsyncClient(timeout=60, follow_redirects=False) as client:
+            response = await client.get(source_url)
+            response.raise_for_status()
+            return departmental_items(response.text, source_url)
     if adapter is None and source_url in _COPENHAGEN_LISTINGS:
         if page_number > 0:
             return []  # All client-side pages are in the first HTML response.

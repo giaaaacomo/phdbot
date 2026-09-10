@@ -106,8 +106,9 @@ ORDER BY DESC(?sitelinks) ?u
 """
 
 # Livello 3: enti che svolgono ricerca e pubblicano bandi propri. Una classe
-# esplicitamente di ricerca, ROR, sito ufficiale e almeno due sitelink evitano
-# di importare la categoria molto piu' rumorosa di tutte le fondazioni.
+# esplicitamente di ricerca, ROR e sito ufficiale evitano di importare tutte
+# le fondazioni. La popolarita' Wikipedia ordina, ma non decide l'ammissibilita':
+# un centro riconosciuto da ROR puo' non avere nessuna voce enciclopedica.
 _RESEARCH_ORG_CLASSES = {
     "Q31855": "research institute",
     "Q7315155": "research center",
@@ -119,8 +120,8 @@ SELECT DISTINCT ?u ?uLabel ?uDescription ?website ?sitelinks ?researchClass WHER
   ?u wdt:P17 wd:{qid} .
   ?u wdt:P856 ?website .
   ?u wdt:P6782 ?ror .
-  ?u wikibase:sitelinks ?sitelinks .
-  FILTER(?sitelinks >= 2)
+  OPTIONAL {{ ?u wikibase:sitelinks ?count }}
+  BIND(COALESCE(?count, 0) AS ?sitelinks)
   SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en,it". }}
 }}
 ORDER BY DESC(?sitelinks) ?u

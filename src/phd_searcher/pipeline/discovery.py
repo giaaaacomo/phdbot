@@ -7,10 +7,11 @@ sitemap.xml → un hop dentro le pagine "hub" (research/careers/postgraduate...)
 from __future__ import annotations
 
 import json
-import re
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import cast
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse, urlsplit
+from xml.etree import ElementTree
 
 import httpx
 from crawl4ai import AsyncWebCrawler, CacheMode, CrawlerRunConfig
@@ -34,6 +35,9 @@ from phd_searcher.pipeline.urls import is_listing_page_url
 # ponytail: lista keyword multilingua a mano; estendere se un paese resta scoperto
 _KEYWORDS = (
     "phd",
+    "jobs",
+    "careers",
+    "emploi",
     "doctoral",
     "doctorate",
     "vacanc",
@@ -78,6 +82,7 @@ _HUB_KEYWORDS = (
     "career",
     "vacan",
     "postgraduate",
+    "admission",
     "graduate",
     "phd",
     "doctora",
@@ -106,7 +111,9 @@ _SPONTANEOUS_KEYWORDS = (
     "candidatura spontanea",
     "initiativbewerbung",
 )
-_LOC_RE = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>")
+_MAX_SITEMAPS = 4
+_MAX_SITEMAP_BYTES = 2_000_000
+_LOGGER = logging.getLogger(__name__)
 
 
 class _Link:
@@ -124,7 +131,13 @@ def _candidates(links: list[dict[str, str | None]]) -> list[_Link]:
         href = link.get("href") or ""
         text = link.get("text") or ""
         haystack = f"{href} {text}".lower()
-        if href and href not in seen and is_listing_page_url(href) and any(k in haystack for k in _KEYWORDS):
+        project_listing = "project" in haystack and "admission" in haystack
+        if (
+            href
+            and href not in seen
+            and is_listing_page_url(href)
+            and (project_listing or any(k in haystack for k in _KEYWORDS))
+        ):
             seen.add(href)
             out.append(_Link(href, text.strip()[:120]))
     return out[:_MAX_CANDIDATES]
@@ -172,16 +185,73 @@ def _same_site(url: str, website_url: str) -> bool:
 
 
 async def _sitemap_candidates(website_url: str) -> list[_Link]:
-    """URL keyword-matching dal sitemap.xml (se esiste; gli indici di sitemap sono ignorati)."""
+    """Read a bounded sitemap index, including namespaced XML and subdomains.
+
+    A root /en/ homepage must not turn /sitemap.xml into /en/sitemap.xml.
+    Four requests total, only same-site redirects/index traversal, and a
+    streaming size limit keep discovery independent of a site's archive size.
+    """
+    queue = [urljoin(website_url, "/sitemap.xml")]
+    visited: set[str] = set()
+    groups: list[list[_Link]] = []
+    async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
+        while queue and len(visited) < _MAX_SITEMAPS:
+            url = queue.pop(0)
+            if url in visited or not _public_sitemap_url(url, website_url):
+                continue
+            visited.add(url)
+            try:
+                payload = bytearray()
+                async with client.stream("GET", url) as response:
+                    _LOGGER.debug("discovery sitemap %s: HTTP %s", url, response.status_code)
+                    if response.status_code in {301, 302, 303, 307, 308}:
+                        destination = urljoin(url, response.headers.get("location", ""))
+                        if destination not in visited and _public_sitemap_url(destination, website_url):
+                            queue.insert(0, destination)
+                        continue
+                    if response.status_code != 200:
+                        continue
+                    async for chunk in response.aiter_bytes():
+                        payload.extend(chunk)
+                        if len(payload) > _MAX_SITEMAP_BYTES:
+                            break
+                if len(payload) > _MAX_SITEMAP_BYTES or b"<!DOCTYPE" in payload.upper():
+                    continue
+                root = ElementTree.fromstring(payload)
+            except (httpx.HTTPError, ElementTree.ParseError) as exc:
+                _LOGGER.warning("discovery sitemap unavailable %s: %s", url, exc)
+                continue
+            kind = root.tag.rsplit("}", 1)[-1]
+            entries = [
+                node.text.strip()
+                for entry in root
+                for node in entry
+                if node.tag.rsplit("}", 1)[-1] == "loc" and node.text
+            ]
+            if kind == "sitemapindex":
+                # Recruitment/post sitemaps before image/tag archives. Preserve
+                # publisher order among equal priorities and cap queued work.
+                entries.sort(key=lambda u: not any(k in u.casefold() for k in (*_KEYWORDS, "post", "page")))
+                queue.extend(u for u in entries if u not in visited and _public_sitemap_url(u, website_url))
+                queue = list(dict.fromkeys(queue))[: _MAX_SITEMAPS - len(visited)]
+            elif kind == "urlset":
+                groups.append(
+                    _candidates([{"href": u, "text": ""} for u in entries if _public_sitemap_url(u, website_url)])
+                )
+    return _merge_candidate_groups(groups)
+
+
+def _public_sitemap_url(url: str, website_url: str) -> bool:
     try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            resp = await client.get(website_url.rstrip("/") + "/sitemap.xml")
-            if resp.status_code != 200:
-                return []
-            urls = _LOC_RE.findall(resp.text)
-    except httpx.HTTPError:
-        return []
-    return _candidates([{"href": u, "text": ""} for u in urls if not u.endswith(".xml")])
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+    return (
+        parsed.scheme in {"http", "https"}
+        and parsed.username is None
+        and parsed.password is None
+        and _same_site(url, website_url)
+    )
 
 
 async def _collect_candidates(
@@ -227,15 +297,23 @@ def _merge_candidate_groups(groups: list[list[_Link]]) -> list[_Link]:
 
 
 def _parse_reply(reply: str, allowed: set[str]) -> list[str]:
-    """Estrae l'array JSON di URL dalla risposta LLM, scartando allucinazioni. [] su qualunque errore."""
+    """Distinguish a valid empty selection from an invalid model response.
+
+    Returning [] for malformed output labelled the institution ``no_listing``
+    and postponed its retry for 30 days. Raise instead: the run records a
+    technical discovery failure, preserves existing sources and can retry.
+    """
     cleaned = reply.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
         parsed = json.loads(cleaned)
-    except ValueError:
-        return []
-    if not isinstance(parsed, list):
-        return []
-    return [u for u in parsed if isinstance(u, str) and u in allowed]
+    except ValueError as exc:
+        raise RuntimeError("discovery selection is not valid JSON; retry discovery") from exc
+    if not isinstance(parsed, list) or any(not isinstance(u, str) for u in parsed):
+        raise RuntimeError("discovery selection is not a URL list; retry discovery")
+    selected = list(dict.fromkeys(u for u in parsed if u in allowed))
+    if parsed and not selected:
+        raise RuntimeError("discovery selected no supplied URLs; retry discovery")
+    return selected
 
 
 def _stop_requested(progress: Progress) -> bool:
@@ -272,10 +350,7 @@ async def run(
                     University.discovery_status.in_(("pending", "failed")),
                     (
                         (University.discovery_status == "done")
-                        & (
-                            University.discovery_checked_at.is_(None)
-                            | (University.discovery_checked_at < done_before)
-                        )
+                        & (University.discovery_checked_at.is_(None) | (University.discovery_checked_at < done_before))
                     ),
                     (
                         (University.discovery_status == "no_listing")
@@ -364,9 +439,7 @@ async def run(
                         prompt = render_prompt("pick_listings.prompt.jinja", university=uni.name, candidates=candidates)
 
                         async def complete_current_prompt(current_prompt: str = prompt) -> str:
-                            return await model.complete(
-                                [{"role": "user", "content": current_prompt}]
-                            )
+                            return await model.complete([{"role": "user", "content": current_prompt}])
 
                         reply = await retry_async(
                             progress,
@@ -397,8 +470,9 @@ async def run(
                         break
                     print(f"discovery failed for {uni.name}: {exc}")
                     await session.rollback()  # la sessione può essere invalida dopo un errore DB
-                    if not was_done:
-                        uni.discovery_status = "failed"
+                    # Retry a failed refresh promptly as well. Existing
+                    # listing rows are retained and remain scrapeable.
+                    uni.discovery_status = "failed"
                 uni.discovery_checked_at = datetime.now(UTC).replace(tzinfo=None)
                 await session.commit()
                 processed += 1

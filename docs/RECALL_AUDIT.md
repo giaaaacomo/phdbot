@@ -44,11 +44,18 @@ success metric.
 ## Institution expansion
 
 Research institutes and research centres enter the catalog only when Wikidata
-identifies the research class, exposes an official website and ROR identifier,
-and the entity has basic public notability. Curated gaps such as ISTI-CNR and
+identifies the research class and exposes an official website and ROR identifier.
+The September 10 patch removes the research-tier Wikipedia popularity gate;
+it is deployed but has not yet been used to repopulate the catalog. Curated gaps such as ISTI-CNR and
 Fondazione Bruno Kessler remain explicit seeds. URL uniqueness prevents an
 official portal from being attached twice when university and institute
 catalogs overlap.
+
+The user has prioritised general discovery over further hard-coded sources.
+See [the root-cause and joint-institution plan](INSTITUTION_DISCOVERY_PLAN.md) for
+implemented local repairs, remaining identity/geography limitations, reference
+registries, and the IPAL regression case. Shared URL uniqueness alone is not
+cross-source opportunity deduplication or a multi-institution affiliation model.
 
 ## Validated repairs, 2026-09-02
 

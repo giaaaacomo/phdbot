@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from phd_searcher.database.models.listing_page import ListingPage
 from phd_searcher.database.models.university import University
+from phd_searcher.pipeline.departmental_sources import DTU_MLSM_JOBS_URL, STATML_PROJECTS_URL
 
 ETH_ZURICH_JOBS_URL = "https://jobs.ethz.ch/site/index"
 ETH_ZURICH_JOBS_SCHEMA: dict[str, object] = {
@@ -112,11 +113,20 @@ TURKU_JOBS_SCHEMA: dict[str, object] = {
     "fields": [{"name": "title", "type": "text", "selector": "h1"}],
 }
 
+DEPARTMENTAL_SCHEMA: dict[str, object] = {
+    "name": "Audited departmental opportunities",
+    "adapter": "departmental",
+    "baseSelector": ".entry-content",
+    "baseFields": [],
+    "fields": [{"name": "title", "type": "text", "selector": "h1"}],
+}
+
 _CURATED_BY_WIKIDATA: dict[str, tuple[tuple[str, dict[str, object]], ...]] = {
     "Q11942": ((ETH_ZURICH_JOBS_URL, ETH_ZURICH_JOBS_SCHEMA),),
     "Q3803752": ((ISTI_CNR_CALLS_URL, ISTI_CNR_CALLS_SCHEMA),),
     "Q3747148": ((FBK_JOBS_URL, FBK_JOBS_SCHEMA),),
-    "Q189022": ((IMPERIAL_JOBS_URL, IMPERIAL_JOBS_SCHEMA),),
+    "Q189022": ((IMPERIAL_JOBS_URL, IMPERIAL_JOBS_SCHEMA), (STATML_PROJECTS_URL, DEPARTMENTAL_SCHEMA)),
+    "Q1269766": ((DTU_MLSM_JOBS_URL, DEPARTMENTAL_SCHEMA),),
     "Q501841": ((TURKU_JOBS_URL, TURKU_JOBS_SCHEMA),),
 }
 

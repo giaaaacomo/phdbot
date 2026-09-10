@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from phd_searcher.pipeline.discovery import _candidates, _Link, _merge_candidate_groups, _parse_reply, _same_site
 
 ALLOWED = {"https://a.example/phd", "https://b.example/vacancies"}
@@ -17,12 +19,14 @@ def test_parse_reply_handles_fenced_json():
     assert _parse_reply(reply, ALLOWED) == ["https://b.example/vacancies"]
 
 
-def test_parse_reply_garbage_is_empty():
-    assert _parse_reply("NONE", ALLOWED) == []
+@pytest.mark.parametrize("reply", ["NONE", '{"a": 1}', '[1]', '["https://hallucinated.example/jobs"]'])
+def test_invalid_selection_is_failure_not_no_listing(reply):
+    with pytest.raises(RuntimeError, match="retry discovery"):
+        _parse_reply(reply, ALLOWED)
 
 
-def test_parse_reply_non_list_json_is_empty():
-    assert _parse_reply('{"a": 1}', ALLOWED) == []
+def test_parse_reply_deduplicates_valid_urls():
+    assert _parse_reply('["https://a.example/phd", "https://a.example/phd"]', ALLOWED) == ["https://a.example/phd"]
 
 
 def test_parse_reply_empty_array():
