@@ -1,6 +1,16 @@
 {
   "observed_on": "2026-09-10",
   "purpose": "Identity and discovery regression sample; not an automatic import list or a recall estimate",
+  "relationship_probe": {
+    "seed_ror_id": "https://ror.org/02feahw73",
+    "query_did_not_include_child_names_or_ids": true,
+    "headquarters_test_filter": "SG",
+    "discovered_ror_ids": ["https://ror.org/00m3mb357", "https://ror.org/05hqw3605", "https://ror.org/027jrtw17", "https://ror.org/05w0js807"],
+    "cold": {"network_requests": 1, "elapsed_seconds": 0.316, "registry_total": 4, "candidate_count": 4},
+    "warm": {"network_requests": 0, "elapsed_seconds": 0.053, "cache_hits": 1},
+    "without_country_filter": {"network_requests": 1, "elapsed_seconds": 7.998, "registry_total": 1221, "candidate_count": 20, "state": "partial", "next_page": 2},
+    "scope": "Identity preview only. No candidate website fetch, catalog import, model call or pipeline mutation. Single timing observations, not throughput estimates."
+  },
   "institutions": [
     {
       "name_on_official_site": "International Research Laboratory on Artificial Intelligence",

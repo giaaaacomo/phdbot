@@ -111,3 +111,75 @@ internal groups remain findable under their parent; one joint job appears once
 with multiple affiliations; genuinely different positions in a shared project
 remain distinct. Unknown application status stays visibly uncertain. No claim
 of complete coverage until a dated independent benchmark demonstrates it.
+
+## Validated low-cost approach (2026-09-10)
+
+Separate **organisation discovery** from **vacancy refresh**. Refresh a local
+registry snapshot on a new release (monthly check is a proposed default), not
+once per university or job run. ROR publishes a versioned
+[JSON dump](https://ror.readme.io/docs/data-dump) with relationship metadata;
+use that for broad coverage, keeping targeted API queries for small previews.
+This avoids thousands of repeated lookups and gives a stable snapshot for joins.
+ROR alone is not exhaustive: supplement missing identities with official
+national/network directories, preserving provenance and avoiding name-only merges.
+
+Implemented `pipeline.registry_probe`: read-only, parent-ID-based discovery with
+SQLite page cache (30 days), explicit next-page cursor, maximum request/page/time
+budgets and persistent HTTP-error cooldowns (at least one hour; respects longer
+Retry-After). No LLM, organisation-site fetch, catalog import or production DB
+write. It locally checks actual relationship edges, active status, names and
+websites; a query hit alone is insufficient. Invalid/truncated responses fail
+rather than masquerading as an empty registry. It never follows API redirects.
+
+Live observations (single measurements, not throughput guarantees):
+
+| Preview | Registry hits | Candidates read | Network requests | Elapsed |
+| --- | ---: | ---: | ---: | ---: |
+| CNRS relationships, headquarters SG | 4 | 4 | 1 | 0.316 s |
+| Same query, cached / network budget zero | 4 | 4 | 0 | 0.053 s |
+| CNRS relationships, no country filter, one-page budget | 1,221 | 20 | 1 | 7.998 s |
+
+The SG query discovered **IPAL, CINTRA, MajuLab and BMC** without their names,
+websites or child IDs in the query/code. SG is an explicit test slice, not a
+production geographical rule: headquarters filtering can lose cross-border jobs.
+The unfiltered preview stopped at page 1 with `next_page=2`; it did not crawl the
+1,221 organisations. Registry hits are NOT counts of hiring labs or missing jobs.
+
+Reproduce a bounded preview:
+
+```sh
+uv run python -m phd_searcher.pipeline.registry_probe --parent 02feahw73 --country SG
+uv run python -m phd_searcher.pipeline.registry_probe --parent 02feahw73 --country SG --max-requests 0
+```
+
+Default cache: ignored `exports/registry-probe.sqlite3`. `--start-page` consumes
+the reported cursor; the probe does not schedule itself or persist a work queue.
+`complete` means the requested API query slice reached its final page, not global
+coverage or a consistent multi-page snapshot. Live paging can drift even when
+totals remain stable; use the versioned dump for real imports. The API's 10,000-hit
+limit is surfaced, not silently interpreted as completeness.
+
+Production integration still to implement, in this order:
+
+1. Add identifier/relationship storage while preserving existing institution
+   IDs and run compatibility (verified backup first). Match by exact registry
+   identifiers; inspect conflicts. Retain multiple affiliations and provenance.
+2. Add a persistent, bounded queue for **new/changed/uncovered** organisations
+   and official directory links. Store last checked, next eligible time and
+   cursor; rotate seeds fairly so the first large parent cannot starve the rest.
+   No unbounded recursive expansion into all partners worldwide. Cross-border
+   relationships may yield candidates without admitting every country to scope.
+3. Send newly established websites to the existing bounded source discovery;
+   distinguish job detail pages from listings and retain ownership evidence.
+   Reuse known boards on normal job refreshes. Unchanged organisation metadata
+   must not trigger another discovery/schema/review cycle. Retry failures with
+   backoff, separately from the successful boards' freshness schedule.
+4. Canary acquisition -> quality -> index with reversible provisional status.
+   Do not deep-review every newly found centre or position. Measure **new unique
+   searchable opportunities**, fetch time and GPU time separately. Deduplicate
+   canonical job IDs/URLs while retaining university/centre provenance.
+
+This proves the identity-discovery method, not end-to-end IPAL ingestion. Main
+pipeline behaviour is unchanged by the preview. RNSR adapter, external-ID schema,
+durable source queue, cross-border location policy and end-to-end dedup remain
+open; no claim that every requested centre is already searchable.
