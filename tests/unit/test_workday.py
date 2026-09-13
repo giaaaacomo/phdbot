@@ -5,11 +5,22 @@ import httpx
 import pytest
 
 from phd_searcher.pipeline import workday
-from phd_searcher.pipeline.discovery import _hub_links
+from phd_searcher.pipeline.discovery import _hub_links, _Link, _select_with_supported_boards
 from phd_searcher.pipeline.normalize import normalize_item
 from phd_searcher.pipeline.source_adapters import fetch_source_adapter
 
 URL = "https://example.wd103.myworkdayjobs.com/en-US/Research/?locations=site123"
+
+
+def test_invalid_model_output_keeps_only_supported_official_candidates():
+    portal = _Link(URL, "See all jobs", "https://lab.example/careers/")
+    other = _Link("https://lab.example/phd-programme", "Programme")
+    assert _select_with_supported_boards("not JSON", [portal, other], "https://lab.example") == [URL]
+    with pytest.raises(RuntimeError, match="not valid JSON"):
+        _select_with_supported_boards("not JSON", [other], "https://lab.example")
+    portal.referrer = "https://other.example/careers/"
+    with pytest.raises(RuntimeError):
+        _select_with_supported_boards("not JSON", [portal], "https://lab.example")
 
 
 def test_board_scope_and_live_official_link_required():

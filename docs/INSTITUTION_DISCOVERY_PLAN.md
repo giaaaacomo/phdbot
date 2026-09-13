@@ -9,6 +9,18 @@ main expansion strategy. No global scraping of LinkedIn is planned.
 
 ### Individual jobs behind official recruitment hubs
 
+Follow-up outcome: run114 exposed malformed model selection that discarded even
+the supported Workday candidate. Fixed retention of supported official-referrer
+boards on invalid model JSON, ownership-deferred re-admission after refreshed
+provenance, and immediate logging/checkpointing of discovery failures. No model
+output is accepted without validation; schema still rechecks the official link.
+Run115 completed in104s: discovery1/schema1/scrape11/quality32/index3. Source8020
+healthy; direct Search API confirms three specific postdoctoral offers. Eight
+other jobs remain stored but the provisional gate reports insufficient evidence;
+acquisition success is not complete search coverage. Follow-up audit needed for
+role taxonomy (degree requirements must not imply a PhD opening), structured
+vacancy evidence and multi-location posts.896 tests/Ruff/mypy passed.
+
 Cohort108–113 completed in25min:34 records,5 indexed. DFKI crawler reports
 anti-bot; ERCIM failed while traversing a PDF. CWI yielded two specific adverts;
 ScaDS a collective call; EBI mainly navigation/programme pages. Do not count

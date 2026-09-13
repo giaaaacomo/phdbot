@@ -332,6 +332,24 @@ def _stop_requested(progress: Progress) -> bool:
     return progress.should_stop
 
 
+def _select_with_supported_boards(reply: str, candidates: list[_Link], website: str) -> list[str]:
+    supported = [
+        c.href for c in candidates
+        if workday_board(c.href) and recruitment_referrer(c.referrer, website)
+    ]
+    try:
+        selected = _parse_reply(reply, {c.href for c in candidates})
+    except RuntimeError:
+        if not supported:
+            raise
+        # The optional model selection must not discard a supported portal
+        # already linked by the institution. Schema admission still verifies
+        # its live link and scope; ambiguous candidates are not auto-approved.
+        _LOGGER.warning("discovery: invalid model selection; retaining supported recruitment boards only")
+        selected = []
+    return list(dict.fromkeys([*supported, *selected]))
+
+
 async def run(
     container: Injector,
     *,
@@ -457,14 +475,7 @@ async def run(
                             f"discovery:{uni.id}:llm",
                             complete_current_prompt,
                         )
-                        valid = _parse_reply(reply, {c.href for c in candidates})
-                        # A supported board linked by the official jobs hub is a
-                        # deterministic candidate; schema admission rechecks its
-                        # live link before trusting it. No hardcoded institution.
-                        valid = list(dict.fromkeys([
-                            *(c.href for c in candidates if workday_board(c.href) and recruitment_referrer(c.referrer, uni.website_url)),
-                            *valid,
-                        ]))
+                        valid = _select_with_supported_boards(reply, candidates, uni.website_url)
                         if not valid:
                             if not was_done:
                                 uni.discovery_status = "no_listing"
@@ -488,7 +499,13 @@ async def run(
                                 if referrer and recruitment_referrer(referrer, uni.website_url) and workday_board(u):
                                     stmt_lp = stmt_lp.on_conflict_do_update(
                                         index_elements=["url"],
-                                        set_={"quality_metrics": ListingPage.quality_metrics.op("||")({"discovery_referrer": referrer})},
+                                        set_={
+                                            "quality_metrics": ListingPage.quality_metrics.op("||")({"discovery_referrer": referrer}),
+                                            "schema_status": case(
+                                                ((ListingPage.schema_status == "deferred") & (ListingPage.quality_reason == "source_preflight:ownership_unverified"), "missing"),
+                                                else_=ListingPage.schema_status,
+                                            ),
+                                        },
                                         where=ListingPage.university_id == uni.id,
                                     )
                                 else:
@@ -499,7 +516,8 @@ async def run(
                 except Exception as exc:  # un sito rotto non ferma la run
                     if _stop_requested(progress):
                         break
-                    print(f"discovery failed for {uni.name}: {exc}")
+                    _LOGGER.error("discovery failed for %s: %s", uni.name, exc)
+                    await progress.save_checkpoint(last_error=str(exc)[:1000], failed_university_id=uni.id)
                     await session.rollback()  # la sessione può essere invalida dopo un errore DB
                     # Retry a failed refresh promptly as well. Existing
                     # listing rows are retained and remain scrapeable.
