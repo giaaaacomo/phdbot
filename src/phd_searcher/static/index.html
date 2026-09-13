@@ -348,6 +348,8 @@
       <div class="section-tools">
         <input id="cov-filter" type="search" title="Filter by institution name, country code or full country name" placeholder="filter by name or country…">
         <span id="cov-count" class="muted result-count" aria-live="polite"></span>
+        <button class="act ghost" id="cov-prev" disabled>Previous</button>
+        <button class="act ghost" id="cov-next" disabled>Next</button>
       </div>
       <div class="table-wrap">
         <table>
@@ -871,6 +873,8 @@ window.cancelSchedule = cancelSchedule;
 
 // ---- coverage ----
 let covData = [];
+let covPage = 0;
+const COV_PAGE_SIZE = 100;
 let coverageLoadToken = 0;
 const covCollator = new Intl.Collator(navigator.language || "en", {numeric: true, sensitivity: "base"});
 let covSort = {key: "country", direction: "asc"};
@@ -952,19 +956,26 @@ function renderCoverage() {
     compareCovValues(covSortValue(left, covSort.key), covSortValue(right, covSort.key))
     || covCollator.compare(left.name || "", right.name || "")
   ));
-  $("#cov-count").textContent = rows.length === covData.length ? `${rows.length}` : `${rows.length} of ${covData.length}`;
+  covPage = Math.min(covPage, Math.max(0, Math.ceil(rows.length / COV_PAGE_SIZE) - 1));
+  const offset = covPage * COV_PAGE_SIZE;
+  $("#cov-count").textContent = rows.length ? `${offset + 1}–${Math.min(offset + COV_PAGE_SIZE, rows.length)} of ${rows.length}${rows.length !== covData.length ? ` (${covData.length} total)` : ''}` : '0 matches';
+  $("#cov-prev").disabled = covPage === 0;
+  $("#cov-next").disabled = offset + COV_PAGE_SIZE >= rows.length;
   updateCoverageSortHeaders();
-  $("#cov-body").innerHTML = rows.map((u, index) => `<tr>
-    <td class="row-number">${index + 1}.</td><td>${countryMark(u.country)}</td><td>${esc(u.name)}</td><td title="${esc(u.catalog_basis)}">${esc(u.catalog_tier)}</td><td>${esc(u.discovery_status)}</td>
+  $("#cov-body").innerHTML = rows.slice(offset, offset + COV_PAGE_SIZE).map((u, index) => `<tr>
+    <td class="row-number">${offset + index + 1}.</td><td>${countryMark(u.country)}</td><td>${esc(u.name)}</td><td title="${esc(u.catalog_basis)}">${esc(u.catalog_tier)}</td><td title="${u.discovery_status === 'catalogued' ? 'Known registry institution. Source discovery has not been activated yet; no model work is queued.' : ''}">${u.discovery_status === 'catalogued' ? 'Catalog only' : esc(u.discovery_status)}</td>
     <td>${u.listing_pages_ok}/${u.listing_pages_count}</td><td>${u.listing_pages_quarantined} pages · ${u.positions_quarantined} items</td><td title="Extracted active / current by deadline / indexed and searchable">${u.positions_count} / ${u.positions_current} / ${u.positions_searchable}</td>
     <td><a href="${esc(u.website_url)}" target="_blank" rel="noopener">site ↗</a></td></tr>`).join("")
     || `<tr><td colspan="9" class="muted">no matches</td></tr>`;
 }
-$("#cov-filter").oninput = renderCoverage;
+$("#cov-filter").oninput = () => { covPage = 0; renderCoverage(); };
+$("#cov-prev").onclick = () => { covPage = Math.max(0, covPage - 1); renderCoverage(); };
+$("#cov-next").onclick = () => { covPage += 1; renderCoverage(); };
 document.querySelectorAll("[data-cov-sort]").forEach(button => button.onclick = () => {
   const key = button.dataset.covSort;
   if (covSort.key === key) covSort.direction = covSort.direction === "asc" ? "desc" : "asc";
   else covSort = {key, direction: ["pages", "quarantine", "positions"].includes(key) ? "desc" : "asc"};
+  covPage = 0;
   renderCoverage();
 });
 

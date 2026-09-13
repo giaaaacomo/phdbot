@@ -72,6 +72,8 @@ def _build_entities(
 
     entities: list[dict[str, object]] = []
     for university in universities:
+        if university.discovery_status == "catalogued":
+            continue  # Registry expansion alone must not enqueue thousands of embeddings.
         if needle and needle not in university.name.casefold():
             continue
         entities.append(

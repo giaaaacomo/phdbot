@@ -139,7 +139,7 @@ async def seed_curated_sources(session: AsyncSession, university: University) ->
     stale quarantine results cannot hide the fix.
     """
 
-    sources = _CURATED_BY_WIKIDATA.get(university.wikidata_id, ())
+    sources = _CURATED_BY_WIKIDATA.get(university.wikidata_id or "", ())
     for url, schema in sources:
         pagination_param = "adapter_page" if schema.get("adapter") == "talentlink" else None
         existing = await session.scalar(select(ListingPage).where(ListingPage.url == url))

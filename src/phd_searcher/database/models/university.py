@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from phd_searcher.database.models.base import Base
@@ -14,7 +15,11 @@ class University(Base):
     __tablename__ = "universities"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    wikidata_id: Mapped[str] = mapped_column(String(32), unique=True)
+    wikidata_id: Mapped[str | None] = mapped_column(String(32), unique=True)
+    ror_id: Mapped[str | None] = mapped_column(String(64), unique=True)
+    # Exact registry assertions, including multiple parents and headquarters.
+    # Not an assertion that partner institutions share all vacancies.
+    registry_metadata: Mapped[dict[str, object] | None] = mapped_column(JSONB, deferred=True)
     name: Mapped[str] = mapped_column(String(512))
     country: Mapped[str] = mapped_column(String(2))  # ISO 3166-1 alpha-2
     website_url: Mapped[str] = mapped_column(String(2048))
@@ -27,7 +32,7 @@ class University(Base):
     catalog_basis: Mapped[str] = mapped_column(String(128), default="wikidata:Q3918")
     # ponytail: n. di sitelink Wikipedia come proxy di notorietà; QS/THE se serve un ranking vero
     sitelinks: Mapped[int] = mapped_column(default=0)
-    # pending | done | no_listing | failed
+    # catalogued (not admitted to discovery) | pending | done | no_listing | failed
     discovery_status: Mapped[str] = mapped_column(String(16), default="pending")
     discovery_checked_at: Mapped[datetime | None]
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())

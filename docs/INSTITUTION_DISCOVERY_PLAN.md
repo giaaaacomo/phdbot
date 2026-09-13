@@ -5,6 +5,96 @@ automatically, including independent and jointly operated research centres.
 Curated sources are regression fixtures and temporary coverage repairs, not the
 main expansion strategy. No global scraping of LinkedIn is planned.
 
+## Deployment checkpoint — 2026-09-13
+
+The catalog foundation below is now implemented and deployed. Older sections
+describe the investigation/proposal; this checkpoint supersedes their identity
+storage and import status, not their unresolved source-discovery limitations.
+
+- Additive migration `a24c9e5b710d`: genuine nullable Wikidata ID, unique ROR ID,
+  and source snapshot/aliases/relationships in `registry_metadata`. Existing
+  institution IDs and positions remain unchanged. Raw metadata is deferred in
+  ordinary ORM reads, so searches/Coverage don't load entire registry records.
+  Relationships preserve exact external IDs, including unloaded partners;
+  they are not yet a separate relational affiliation/search UI.
+- `python -m phd_searcher.pipeline.registry_catalog SNAPSHOT` previews a local
+  ROR ZIP/JSON. It streams the large JSON array with bounded per-record memory,
+  validates the entire snapshot before writes and makes **no HTTP/LLM calls**.
+  Exact ROR/Wikidata matches link identities. Ambiguous IDs, same name/site
+  without an exact identifier are held as conflicts, never auto-merged.
+- Import uses the existing explicit European headquarters scope. The explicit
+  `--related-to 02feahw73` canary adds one-hop CNRS parent/related centres across
+  borders, including IPAL; it does not recursively expand all world partners.
+  This is a chosen affiliation seed, not a hard-coded list of centres/websites.
+  Eligible ROR types are education/facility/nonprofit, active records only.
+  Registry eligibility is not verification of higher-education level or hiring;
+  government-only entities, company-only entities and unregistered projects
+  remain outside this first adapter.
+- Snapshot: **ROR v2.12, 2026-08-25**, DOI
+  [10.5281/zenodo.22099990](https://doi.org/10.5281/zenodo.22099990).
+  Download 36,246,232 bytes; publisher MD5 verified
+  `ce8807691455d4ada3216c31408e9e1a`. Local ZIP SHA256:
+  `5779c7baf71771fd8ea829201e7bd4343a3c68ff36c595f480b3a00292f78931`.
+- Production result: 137,398 registry records read; 17,872 in selected scope;
+  **15,594 new catalog identities**, **1,785 existing identities linked**,
+  **493 conflicts held**. Total catalog: **18,673** (previously 3,079).
+  9,754 institutions have a ROR ID without a Wikidata ID. Repeat on restored DB:
+  17,379 unchanged, 493 conflicts, zero new rows/activations. New candidates
+  counted with a small import cap differ because same-name/site collisions
+  against newly admitted records become visible as more records are admitted.
+- Production import: **13.68 seconds**, peak RSS **245,648 KiB**, no GPU work.
+  All 15,594 additions remain `catalogued` / **Catalog only**: excluded from
+  source discovery AND institution embedding until explicitly activated.
+  Existing names/sites/countries/discovery states match a pre-import checksum;
+  all 57,761 positions remain intact. No pipeline run was launched.
+- Coverage renders 100 rows/page, preserving global filtering, sorting and
+  numbering. Post-import real Chromium check passed filtering to IPAL's ROR
+  display name "Image and Pervasive Access Laboratory". Registry aliases are
+  stored but not yet exposed in the Coverage text filter. API observation:
+  18,673 institutions in 1.241 seconds / 7,090,077 bytes; server-side pagination
+  remains a potential improvement, not implemented here.
+
+### Operator workflow (no full scan required)
+
+```sh
+# Preview, then import new catalog identities without queued model work.
+uv run python -m phd_searcher.pipeline.registry_catalog exports/v2.12-2026-08-25-ror-data.zip --related-to 02feahw73 --max-new 20000
+# Add --apply only after reviewing counts/conflicts and verifying a backup.
+
+# Admit a bounded cohort of already catalogued entities to discovery.
+# Optional --activate-name narrows a canary by institution display name.
+uv run python -m phd_searcher.pipeline.registry_catalog exports/v2.12-2026-08-25-ror-data.zip --related-to 02feahw73 --max-new 0 --activate-limit 5 --apply
+```
+
+Activation changes only `catalogued -> pending`; it never resets done/failed
+records or starts a run. Then use a **scoped** discovery -> schema -> scrape ->
+quality -> index canary in the existing pipeline, with matching name/limits.
+Unchanged registry import never retries existing websites or deep review.
+Catalogued rows are not automatically activated by an unlimited pipeline.
+Catalog import/activation currently use this CLI, not dashboard controls or a
+scheduled registry updater; the historical `universities` stage still runs
+Wikidata. No unattended process is being claimed or left running.
+
+### Remaining priority
+
+1. Make bounded activation user-facing and select cohorts by promising,
+   uncovered institutional/subject coverage, rather than arbitrary ROR order.
+2. Run a no-curated-source-seed end-to-end canary. IPAL identity is present, but
+   its direct TLS issue and any job's location/deadline still require resolution.
+   Generic source discovery and ownership attribution remain distinct from
+   this successful identity import. No claim of 15,594 new job boards.
+3. Persist/schedule registry release checks and source frontiers with bounded
+   backoff; do not repeat the whole organisational lookup each vacancy refresh.
+4. Complement ROR with RNSR/official directories, resolve held conflicts,
+   distinguish job location from headquarters and deduplicate joint jobs with
+   retained provenance. ROR alone is not complete coverage of all centres.
+
+Verification: 868 unit tests, Ruff, mypy (118 files), real restored-DB migration,
+full import + idempotent repeat, preservation checksum and Chromium UI smoke.
+Pre-migration backup `backups/pre-ror-20260913.dump` fully restored successfully
+before deployment; SHA256
+`bf52fa5d1878bbbd497acbad44b17d23017a2445a3dc251040e33ee4acb1541d`.
+
 ## Findings and implementation state
 
 | Boundary | Evidence in the current code | State |
