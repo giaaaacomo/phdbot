@@ -7,6 +7,19 @@ main expansion strategy. No global scraping of LinkedIn is planned.
 
 ## Deployment checkpoint — 2026-09-13
 
+### Validated discovery selection
+
+Replace JSON-text selection with select_listing_pages tool calls. The same
+local model receives actionable argument validation errors, with at most three
+corrections and bounded output/context. Accept only exact supplied URLs; a
+valid empty tool call is different from failure to call the tool. Exhausted
+validation does not trigger another complete transport-retry budget. Native
+Ollama transport preserves tool calls, matching the schema-generation strategy.
+Supported official-referrer Workday fallback remains subject to live schema
+admission. No changed verdicts or relaxed searchability rules.926 unit tests,
+Ruff and mypy pass. Next evaluation: ERCIM targeted acquisition after prior
+PDF-hub failure, then inspect actual searchable opportunities.
+
 ### Individual jobs behind official recruitment hubs
 
 Scientific-role follow-up: the eight EBI exclusions were deterministic gate

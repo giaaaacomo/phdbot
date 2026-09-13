@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal, cast
 
+import httpx
 import litellm
 
 from phd_searcher.config.llm import EmbeddingConfig, LLMConfig
@@ -48,6 +49,27 @@ class ModelHelper:
             temperature=self._llm.temperature,
         )
         return resp.choices[0].message.content or ""
+
+    async def complete_with_tools(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Preserve native Ollama tool calls; never request JSON text output."""
+        if self._llm.model.startswith("ollama/") and self._llm.api_base:
+            base = self._llm.api_base.rstrip("/").removesuffix("/v1")
+            async with httpx.AsyncClient(timeout=180) as client:
+                response = await client.post(f"{base}/api/chat", json={
+                    "model": self._llm.model.removeprefix("ollama/"),
+                    "messages": messages, "tools": tools, "stream": False,
+                    "options": {"temperature": 0, "num_ctx": 16384, "num_predict": 2048},
+                })
+                response.raise_for_status()
+            return cast("dict[str, Any]", response.json().get("message") or {})
+        response = await litellm.acompletion(
+            model=self._llm.model, messages=messages, tools=tools,
+            tool_choice="required", api_base=self._llm.api_base,
+            api_key=self._llm.api_key, temperature=0, max_tokens=2048,
+        )
+        return cast("dict[str, Any]", response.choices[0].message.model_dump(exclude_none=True))
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         resp = await litellm.aembedding(

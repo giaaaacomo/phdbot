@@ -28,6 +28,7 @@ from phd_searcher.engine.model_helper import ModelHelper
 from phd_searcher.engine.prompt_helper import render_prompt
 from phd_searcher.engine.search_helper import search_listing_candidates
 from phd_searcher.pipeline.curated_sources import seed_curated_sources
+from phd_searcher.pipeline.discovery_selection import DiscoverySelectionExhaustedError, select_listings
 from phd_searcher.pipeline.progress import Progress
 from phd_searcher.pipeline.retry import retry_async
 from phd_searcher.pipeline.urls import is_listing_page_url
@@ -467,15 +468,22 @@ async def run(
                     else:
                         prompt = render_prompt("pick_listings.prompt.jinja", university=uni.name, candidates=candidates)
 
-                        async def complete_current_prompt(current_prompt: str = prompt) -> str:
-                            return await model.complete([{"role": "user", "content": current_prompt}])
+                        async def select_current_candidates(
+                            current_prompt: str = prompt,
+                            allowed: frozenset[str] = frozenset(c.href for c in candidates),
+                        ) -> list[str]:
+                            return await select_listings(model, current_prompt, allowed, progress)
 
-                        reply = await retry_async(
-                            progress,
-                            f"discovery:{uni.id}:llm",
-                            complete_current_prompt,
-                        )
-                        valid = _select_with_supported_boards(reply, candidates, uni.website_url)
+                        try:
+                            selected = await retry_async(
+                                progress, f"discovery:{uni.id}:llm", select_current_candidates,
+                                non_retryable=(DiscoverySelectionExhaustedError,),
+                            )
+                        except DiscoverySelectionExhaustedError:
+                            # Preserve the existing conservative supported-board fallback.
+                            valid = _select_with_supported_boards("invalid", candidates, uni.website_url)
+                        else:
+                            valid = _select_with_supported_boards(json.dumps(selected), candidates, uni.website_url)
                         if not valid:
                             if not was_done:
                                 uni.discovery_status = "no_listing"
