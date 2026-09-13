@@ -7,6 +7,52 @@ main expansion strategy. No global scraping of LinkedIn is planned.
 
 ## Deployment checkpoint — 2026-09-13
 
+### Source preflight repair after canary audit
+
+Original runs #104/#105 finished in 213s/354s. Idiap produced one genuine
+Postdoctoral Researcher in Fundamental Machine Learning (103385), confirmed on
+its official Careers page. OFAI produced a false attribution: MSCA Doctoral
+Networks2026 (103388) is a programme funding call, not an OFAI vacancy; OFAI's
+own page explicitly reports no current openings. A second Idiap source produced
+a `Not Found` item (not indexed). Therefore two `done` runs were not two useful
+acquisition successes.
+
+Implemented and deployed deterministic checks before schema inference:
+
+- HTTP404/410 and exact error headings -> `unavailable`; explicit no-openings
+  text -> `empty`. Mixed positive job evidence prevents the empty inference.
+  Both states are eligible for schema recheck after seven days **when another
+  schema stage runs**, not via a new background timer. Hosting enquiries remain
+  available on the source but aren't converted into vacancies by this check.
+- External uncurated sources require structured JobPosting hiringOrganization
+  naming the exact institution, consistently across postings. Generic mentions,
+  funding links and mixed-employer aggregators do not establish ownership.
+  Unknown ownership -> `deferred`, reversible, not rejected or deleted.
+  Audited `seed` sources retain their existing trust. This intentionally
+  conservative boundary can hold valid external ATS pages without matching
+  machine-readable employer evidence; alias/provenance-based validation is still
+  needed to increase their coverage safely. Internal same-domain lab ownership
+  is not solved by a host check alone.
+- Server-observed redirects to an existing same-owner listing mark the old
+  source `alias`; keep the row, jobs and canonical-source ID. Do not guess URL
+  equivalence by removing suffixes. Cross-owner collisions defer, not merge.
+- Quality gate preserves preflight holds instead of making plausible extracted
+  titles healthy again. Exact error-title artefacts are quarantined. Scrape also
+  recognises explicit empty/error pages before returning extracted items.
+
+After restore-verified backup, only sources7997/7998/7999/8000 were made stale
+for revalidation. OFAI #106 completed in55s: schema0/quality7/index0;
+7998alias,7999empty,8000deferred; seven records retained in quarantine and no
+OFAI record indexed. Idiap #107 (persistent schedule5) completed in50s:
+schema0/quality3/index0; source7997 is unavailable. Direct search API checks
+still return the genuine Idiap postdoc (103385), and zero OFAI opportunities.
+No new institution cohort launched. Neither validation generated new schemas.
+
+882 unit tests, Ruff and mypy119 passed before deploy. Backup:
+`backups/pre-source-preflight-20260913.dump`, SHA256
+`5db45141ae75e434dd50b8f1cbc5b7950f39d9dbdbb2cbc06c3ea00beaba71d5`,
+fully restored with18,673 institutions/57,770 positions before correction.
+
 ### First acquisition canaries launched
 
 After the catalog import, two institutions were admitted to discovery: Idiap

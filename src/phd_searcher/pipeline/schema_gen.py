@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
@@ -15,18 +16,20 @@ from crawl4ai.models import CrawlResult
 from crawl4ai.utils import preprocess_html_for_schema
 from injector import Injector
 from litellm import acompletion
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from phd_searcher.config import Settings
 from phd_searcher.database.models.listing_page import ListingPage
 from phd_searcher.database.models.university import University
+from phd_searcher.pipeline.discovery import _same_site
 from phd_searcher.pipeline.progress import Progress
 from phd_searcher.pipeline.retry import retry_async
 from phd_searcher.pipeline.schema_quality import (
     repair_base_anchor_url_schema,
     schema_quality_issues,
 )
+from phd_searcher.pipeline.source_validation import SchemaDeferredError, employer_evidence, page_state
 from phd_searcher.pipeline.urls import is_listing_page_url
 
 _QUERY_UNIVERSITY = (
@@ -371,7 +374,11 @@ async def run(
         stmt = (
             select(ListingPage, University)
             .outerjoin(University, ListingPage.university_id == University.id)
-            .where(ListingPage.schema_status.in_(("missing", "stale", "failed")))
+            .where(or_(
+                ListingPage.schema_status.in_(("missing", "stale", "failed")),
+                and_(ListingPage.schema_status.in_(("empty", "unavailable")),
+                     ListingPage.quality_checked_at < datetime.now(UTC).replace(tzinfo=None) - timedelta(days=7)),
+            ))
             .order_by(
                 case((ListingPage.kind == "aggregator", 0), else_=1),
                 case((ListingPage.schema_status == "missing", 0), else_=1),
@@ -396,10 +403,35 @@ async def run(
                     async def crawl_listing(listing_url: str = page.url) -> CrawlResult:
                         result = await crawler.arun(listing_url, config=crawl_config)
                         if not result.success or not result.html:
+                            if page_state(result.html or "", result.redirected_status_code or result.status_code) == "unavailable":
+                                return result
                             raise RuntimeError(result.error_message or "empty page")
                         return result
 
                     result = await retry_async(progress, f"schema:{page.id}:crawl", crawl_listing)
+                    target = result.redirected_url or page.url
+                    source_html = result.html or ""
+                    state = page_state(source_html, result.redirected_status_code or result.status_code)
+                    reason = f"source_preflight:{state}" if state else ""
+                    if (state != "unavailable" and uni is not None and page.source != "seed"
+                        and not _same_site(target, uni.website_url) and not employer_evidence(source_html, uni.name)):
+                        state, reason = "deferred", "source_preflight:ownership_unverified"
+                    if state not in {"unavailable", "deferred"} and target != page.url:
+                        canonical = await session.scalar(select(ListingPage).where(ListingPage.url == target, ListingPage.id != page.id))
+                        if canonical is not None:
+                            state = "alias" if canonical.university_id == page.university_id else "deferred"
+                            reason = "source_preflight:redirect_alias" if state == "alias" else "source_preflight:ownership_conflict"
+                            page.quality_metrics = {**(page.quality_metrics or {}), "canonical_source_id": canonical.id, "redirect_url": target}
+                        elif len(target) <= 2048:
+                            # Only a server-observed redirect, never a guessed .html removal.
+                            page.url = target
+                    if state:
+                        page.schema_status = state
+                        page.quality_status = "unknown" if state == "empty" else "quarantine"
+                        page.quality_reason = reason
+                        page.quality_checked_at = datetime.now(UTC).replace(tzinfo=None)
+                        print(f"schema_gen: skipped model work for {page.url}: {reason}")
+                        raise SchemaDeferredError(reason)
                     query = _QUERY_AGGREGATOR if page.kind == "aggregator" else _QUERY_UNIVERSITY
                     html = result.cleaned_html or result.html
                     expected_fields = (
@@ -444,6 +476,8 @@ async def run(
                     page.schema_status = "ok"
                     _remember_schema(reusable_schemas, cache_key, schema)
                     generated += 1
+                except SchemaDeferredError:
+                    pass
                 except Exception as exc:
                     if _should_stop(progress):
                         break

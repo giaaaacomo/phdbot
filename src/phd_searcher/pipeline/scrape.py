@@ -193,6 +193,13 @@ async def _fetch_page(
             if status_code in {401, 403} or _is_permanent_source_denial(RuntimeError(message)):
                 raise PermanentSourceDenialError(message)
             raise RuntimeError(message)
+        from phd_searcher.pipeline.source_validation import page_state
+
+        state = page_state(result.html or "", result.redirected_status_code or result.status_code)
+        if state == "unavailable":
+            raise PermanentSourceDenialError(f"source page unavailable: {url}")
+        if state == "empty":
+            return []
         parsed_batch: object = json.loads(result.extracted_content or "[]")
         if not isinstance(parsed_batch, list):
             raise RuntimeError(f"extraction did not return a list: {url}")

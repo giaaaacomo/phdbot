@@ -57,6 +57,7 @@ class QualityReason(StrEnum):
     TITLE_ASSET_NAME = "title_asset_name"
     TITLE_CONTROL_CHARS = "title_control_chars"
     TITLE_ABSURD = "title_absurd"
+    ERROR_PAGE_TITLE = "error_page_title"
     NAVIGATION_TITLE = "navigation_title"
     CONTENT_SECTION_MISMATCH = "content_section_mismatch"
     EDITORIAL_ARCHIVE_ITEM = "editorial_archive_item"
@@ -307,6 +308,8 @@ def _title_reasons(title: str) -> tuple[list[QualityReason], bool]:
         reasons.append(QualityReason.TITLE_ABSURD)
 
     folded = decoded.casefold().strip(" .:;|/-_\u00a0")
+    if folded in {"not found", "page not found", "404", "404 not found", "404 page not found"}:
+        reasons.append(QualityReason.ERROR_PAGE_TITLE)
     return list(dict.fromkeys(reasons)), folded in _NAVIGATION_TITLES
 
 
@@ -705,6 +708,17 @@ async def run(
                 break
 
             now = datetime.now(UTC).replace(tzinfo=None)
+            if listing_page is not None and (listing_page.quality_reason or "").startswith("source_preflight:") and listing_page.schema_status != "ok":
+                # Don't turn an unowned/empty/error/alias source back to healthy
+                # merely because its old extracted titles look plausible.
+                decision = QualityDecision(QualityDisposition.QUARANTINE, (QualityReason.SOURCE_HEALTH_QUARANTINE,))
+                for position, _page, _university in source_rows:
+                    _apply_decision(position, decision, now=now)
+                await session.commit()
+                processed += len(source_rows)
+                completed.add(key)
+                await progress.save_checkpoint(completed_listing_keys=sorted(completed), processed_positions=processed)
+                continue
             assessments: list[CandidateAssessment] = []
             for position, page, _university in source_rows:
                 assessment = assess_candidate(
