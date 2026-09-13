@@ -26,6 +26,15 @@ _DOCTORAL_FELLOWSHIP_TITLE = re.compile(
     re.I,
 )
 
+# A concrete job title must not become a PhD/fellowship merely because its
+# qualifications, benefits or neighbouring programmes mention one. Keep the
+# existing body fallback for generic/multilingual titles not covered here.
+_NAMED_JOB_TITLE = re.compile(
+    r"\b(?:developer|officer|specialist|engineer|curator|bioinformatician|"
+    r"team leader|coordinator|manager|administrator|designer|analyst|scientist)\b",
+    re.I,
+)
+
 _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("postdoc", re.compile(r"\bpost[ -]?doc(?:toral)?\b|\bpostdottor", re.I)),
     (
@@ -83,6 +92,10 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(
             r"\bresearcher\b|\bresearch scientist\b|\bresearch engineer\b|\bresearch associate\b|"
             r"\bscientific officer\b|"
+            r"\b(?:user\s+)?research officer\b|\bbioinformatician\b|"
+            r"\b(?:biological|scientific|genomic) curator\b|"
+            r"\b(?:genomics|bioinformatics|computational biology)"
+            r"(?:\s+[A-Za-z-]+){0,5}\s+team (?:leader|lead)\b|"
             r"\bricercatore\b|\bincaric(?:o|hi) di ricerca\b|\bincaric(?:o|hi) di lavoro autonomo\b",
             re.I,
         ),
@@ -101,4 +114,6 @@ def classify_position(title: str, description: str = "", explicit: str | None = 
         return "phd"
     if title_kind:
         return title_kind
+    if _NAMED_JOB_TITLE.search(title):
+        return "other"
     return next((kind for kind, pattern in _PATTERNS if pattern.search(description)), "other")

@@ -790,6 +790,29 @@ def test_provisional_gate_does_not_promote_portal_noise(position: Position) -> N
     )
 
 
+@pytest.mark.parametrize(("title", "expected"), [
+    ("User Research Officer", True), ("Bioinformatician", True),
+    ("Biological Curator - Chemical Biology Resources", True),
+    ("Plant Genomics and Variation Team Leader", True),
+    ("Full Stack Developer", False), ("Outreach and Engagement Officer", False),
+    ("Digital Transformation Specialist", False), ("Senior Site Reliability Engineer", False),
+])
+def test_scientific_role_recall_does_not_admit_every_official_job(title, expected):
+    listing = ListingPage(id=8, url="https://university.example/jobs", quality_status="healthy")
+    position = _position(
+        500, UNKNOWN, title=title, screening_status="pending", position_type="other", listing_page_id=8,
+        description="A PhD is required. You will collaborate with postdoctoral fellows.",
+        deadline=date(2026, 10, 1),
+    )
+    assert is_provisional_eligible(position, listing_page=listing, today=date(2026, 9, 13)) is expected
+    if expected:
+        position.deadline = date(2026, 9, 1)
+        assert not is_provisional_eligible(position, listing_page=listing, today=date(2026, 9, 13))
+        position.deadline = date(2026, 10, 1)
+        listing.quality_status = "quarantine"
+        assert not is_provisional_eligible(position, listing_page=listing, today=date(2026, 9, 13))
+
+
 @pytest.mark.parametrize("title", ["Administrative Vacancies", "Operational Vacancies"])
 def test_provisional_gate_does_not_rescue_category_heading_from_shared_listing_text(
     title: str,

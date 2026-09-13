@@ -100,3 +100,19 @@ def test_integrative_teaching_contracts_are_faculty_positions():
 
 def test_predoctoral_scholarships_remain_phd_positions():
     assert classify_position("Beca predoctoral en inteligencia artificial") == "phd"
+
+
+@pytest.mark.parametrize("title", [
+    "User Research Officer", "Bioinformatician", "Biological Curator - Chemical Biology Resources",
+    "Plant Genomics and Variation Team Leader",
+])
+def test_scientific_roles_are_not_degrees_or_funding_mentions(title):
+    assert classify_position(title, "You must have a PhD. We also host postdoctoral fellowships.") == "research_staff"
+
+
+@pytest.mark.parametrize("title", [
+    "Full Stack Developer", "Outreach and Engagement Officer", "Digital Transformation Specialist",
+    "Senior Site Reliability Engineer", "Kitchen Team Leader",
+])
+def test_named_nonresearch_jobs_do_not_borrow_degree_or_colleague_roles(title):
+    assert classify_position(title, "A PhD is required. You will work with doctoral students and postdoctoral fellows.") == "other"

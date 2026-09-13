@@ -9,6 +9,17 @@ main expansion strategy. No global scraping of LinkedIn is planned.
 
 ### Individual jobs behind official recruitment hubs
 
+Scientific-role follow-up: the eight EBI exclusions were deterministic gate
+abstentions, not fetch failures. Title taxonomy now recognises research officers,
+bioinformaticians, biological/scientific curators and domain-qualified genomics/
+bioinformatics team leaders as research_staff. Named technical/admin job titles
+do not inherit degree/fellowship types from body qualifications; generic and
+multilingual fallback remains. No blanket trusted-board publication exception.
+Read-only evaluation on all11 EBI jobs admits7 rather than3; the four additional
+roles are reversible strong-title probable leads, not verified verdicts. Four
+technical/admin jobs remain excluded. Deadline and quarantine exclusions tested.
+Index-only scoped run publishes new candidates; no bulk DB relabel or rescrape.
+
 Follow-up outcome: run114 exposed malformed model selection that discarded even
 the supported Workday candidate. Fixed retention of supported official-referrer
 boards on invalid model JSON, ownership-deferred re-admission after refreshed
