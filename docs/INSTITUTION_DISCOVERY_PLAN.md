@@ -7,6 +7,41 @@ main expansion strategy. No global scraping of LinkedIn is planned.
 
 ## Deployment checkpoint — 2026-09-13
 
+### Individual jobs behind official recruitment hubs
+
+Cohort108–113 completed in25min:34 records,5 indexed. DFKI crawler reports
+anti-bot; ERCIM failed while traversing a PDF. CWI yielded two specific adverts;
+ScaDS a collective call; EBI mainly navigation/programme pages. Do not count
+these as complete recruitment coverage.
+
+EBI already exposed a location-filtered Workday URL, but schema budget5 consumed
+general pages first. A JS-only external portal also lacked the exact structured
+employer proof required by the prior source preflight.
+
+Implemented a reusable public Workday adapter, not an institution-specific seed:
+
+- Discovery records the referring page and retains official recruitment-hub
+  provenance when the same link appears in multiple places. Supported boards
+  are kept as deterministic candidates and prioritised under the schema cap.
+- Schema preparation refetches the official recruitment page and verifies its
+  explicit jobs link to the exact board, including scope facets. External hub
+  claims, arbitrary mentions and a hostname alone are insufficient. Unknown
+  query filters are not discarded or broadened. Quality updates keep provenance.
+- Read the public job list in pages of20 and retrieve each job's own structured
+  description, publication date and closing date. No model needed for extraction;
+  existing normalization, deduplication and searchability rules still apply.
+- Out-of-range Workday offsets can repeat page1: terminate on the scoped total.
+  Malformed responses and missing detail evidence fail, never become an empty
+  board. HTTP errors/redirects are not bypassed. Ordinary pipeline budgets apply.
+- Downloadable documents are excluded from HTML hub traversal.
+
+Live adapter check:11 EBI-scoped jobs,79,944 description characters; next page
+correctly empty. This validates extraction, not eligibility of all11 jobs.
+895 existing+targeted unit checks, Ruff and mypy passed before deploy. Operator
+checkpoint records the bounded discovery/schema1/scrape1/quality/index canary.
+Remaining: other ATS families, same-domain organisational attribution, broad
+programme-page routing, DFKI access, and complete source coverage.
+
 ### Source preflight repair after canary audit
 
 Original runs #104/#105 finished in 213s/354s. Idiap produced one genuine

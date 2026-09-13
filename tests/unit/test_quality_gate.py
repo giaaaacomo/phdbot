@@ -481,6 +481,7 @@ def test_apply_listing_health_marks_quarantined_schema_stale_without_deleting_it
     page = ListingPage(
         id=7,
         url="https://example.test/jobs",
+        quality_metrics={"discovery_referrer": "https://example.test/careers"},
         extraction_schema={"baseSelector": "*"},
         schema_status="ok",
     )
@@ -499,6 +500,7 @@ def test_apply_listing_health_marks_quarantined_schema_stale_without_deleting_it
     assert page.quality_status == "quarantine"
     assert page.quality_reason == "quality_gate:quarantine:title_html_markup:5"
     assert page.quality_metrics["quarantined"] == 5
+    assert page.quality_metrics["discovery_referrer"] == "https://example.test/careers"
     assert page.quality_checked_at == now
     assert page.extraction_schema == {"baseSelector": "*"}
     assert page.schema_status == "stale"

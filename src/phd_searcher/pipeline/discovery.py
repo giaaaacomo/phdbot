@@ -31,6 +31,7 @@ from phd_searcher.pipeline.curated_sources import seed_curated_sources
 from phd_searcher.pipeline.progress import Progress
 from phd_searcher.pipeline.retry import retry_async
 from phd_searcher.pipeline.urls import is_listing_page_url
+from phd_searcher.pipeline.workday import recruitment_referrer, workday_board
 
 # ponytail: lista keyword multilingua a mano; estendere se un paese resta scoperto
 _KEYWORDS = (
@@ -117,14 +118,15 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class _Link:
-    __slots__ = ("href", "text")
+    __slots__ = ("href", "referrer", "text")
 
-    def __init__(self, href: str, text: str) -> None:
+    def __init__(self, href: str, text: str, referrer: str = "") -> None:
         self.href = href
         self.text = text
+        self.referrer = referrer
 
 
-def _candidates(links: list[dict[str, str | None]]) -> list[_Link]:
+def _candidates(links: list[dict[str, str | None]], referrer: str = "") -> list[_Link]:
     out: list[_Link] = []
     seen: set[str] = set()
     for link in links:
@@ -139,7 +141,7 @@ def _candidates(links: list[dict[str, str | None]]) -> list[_Link]:
             and (project_listing or any(k in haystack for k in _KEYWORDS))
         ):
             seen.add(href)
-            out.append(_Link(href, text.strip()[:120]))
+            out.append(_Link(href, text.strip()[:120], referrer))
     return out[:_MAX_CANDIDATES]
 
 
@@ -148,7 +150,7 @@ def _hub_links(links: list[dict[str, str | None]]) -> list[str]:
     for link in links:
         href = link.get("href") or ""
         haystack = f"{href} {link.get('text') or ''}".lower()
-        if not href.startswith("http") or any(x in haystack for x in _HUB_EXCLUDE):
+        if not href.startswith("http") or not is_listing_page_url(href) or any(x in haystack for x in _HUB_EXCLUDE):
             continue
         if any(k in haystack for k in _HUB_KEYWORDS):
             scored.append((len(href), href))
@@ -262,13 +264,22 @@ async def _collect_candidates(
     Tutti i livelli sempre: i candidati della sola homepage sono spesso pagine
     informative che l'LLM scarta, mentre il listing vero è un hop più in là.
     """
-    groups = [_candidates(links), await _sitemap_candidates(website_url)]
+    groups = [_candidates(links, website_url), await _sitemap_candidates(website_url)]
     for hub in _hub_links(links):
         result = await crawler.arun(hub, config=config)
         if result.success:
             hub_links = list(result.links.get("internal", [])) + list(result.links.get("external", []))
-            groups.append(_candidates(hub_links))
-    return _merge_candidate_groups(groups)
+            groups.append(_candidates(hub_links, result.redirected_url or hub))
+    merged = _merge_candidate_groups(groups)
+    for candidate in merged:
+        # A duplicate link from a homepage/sitemap must not erase stronger
+        # provenance subsequently observed on an official recruitment hub.
+        if workday_board(candidate.href):
+            for group in groups:
+                for observed in group:
+                    if observed.href == candidate.href and recruitment_referrer(observed.referrer, website_url):
+                        candidate.referrer = observed.referrer
+    return merged
 
 
 def _merge_candidate_groups(groups: list[list[_Link]]) -> list[_Link]:
@@ -447,6 +458,13 @@ async def run(
                             complete_current_prompt,
                         )
                         valid = _parse_reply(reply, {c.href for c in candidates})
+                        # A supported board linked by the official jobs hub is a
+                        # deterministic candidate; schema admission rechecks its
+                        # live link before trusting it. No hardcoded institution.
+                        valid = list(dict.fromkeys([
+                            *(c.href for c in candidates if workday_board(c.href) and recruitment_referrer(c.referrer, uni.website_url)),
+                            *valid,
+                        ]))
                         if not valid:
                             if not was_done:
                                 uni.discovery_status = "no_listing"
@@ -459,9 +477,22 @@ async def run(
                                         url=u[:2048],
                                         kind="university",
                                         source="search" if u in search_hrefs else "funnel",
+                                        quality_metrics={
+                                            "discovery_referrer": next((c.referrer for c in candidates if c.href == u), ""),
+                                        },
                                     )
-                                    .on_conflict_do_nothing(index_elements=["url"])
                                 )
+                                referrer = next((c.referrer for c in candidates if c.href == u), "")
+                                # Refresh provenance only for this same owner. Never steal
+                                # another institution's source on a shared recruitment site.
+                                if referrer and recruitment_referrer(referrer, uni.website_url) and workday_board(u):
+                                    stmt_lp = stmt_lp.on_conflict_do_update(
+                                        index_elements=["url"],
+                                        set_={"quality_metrics": ListingPage.quality_metrics.op("||")({"discovery_referrer": referrer})},
+                                        where=ListingPage.university_id == uni.id,
+                                    )
+                                else:
+                                    stmt_lp = stmt_lp.on_conflict_do_nothing(index_elements=["url"])
                                 await session.execute(stmt_lp)
                             uni.discovery_status = "done"
                             found += 1

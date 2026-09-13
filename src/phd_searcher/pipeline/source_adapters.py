@@ -21,6 +21,7 @@ from bs4 import BeautifulSoup
 
 from phd_searcher.pipeline.departmental_sources import DEPARTMENTAL_URLS, departmental_items
 from phd_searcher.pipeline.normalize import extract_terms, parse_compensation
+from phd_searcher.pipeline.workday import fetch_workday_page
 
 _TALENTLINK = "talentlink"
 _TALENTADORE = "talentadore"
@@ -30,7 +31,7 @@ _COPENHAGEN_LISTINGS = frozenset(
         "https://employment.ku.dk/all-vacancies/",
     }
 )
-SUPPORTED_SOURCE_ADAPTERS = frozenset({_TALENTLINK, _TALENTADORE, "departmental"})
+SUPPORTED_SOURCE_ADAPTERS = frozenset({_TALENTLINK, _TALENTADORE, "departmental", "workday"})
 _ALLOWED_ADAPTER_HOSTS: dict[str, frozenset[str]] = {
     _TALENTLINK: frozenset({"recruitmentplatform.com"}),
     _TALENTADORE: frozenset({"ats.talentadore.com"}),
@@ -338,6 +339,10 @@ async def fetch_source_adapter(
     """Fetch one durable scrape page, or ``None`` for ordinary HTML sources."""
 
     adapter = source_adapter_name(schema)
+    if adapter == "workday":
+        if source_url is None:
+            raise RuntimeError("Workday requires its admitted source URL")
+        return await fetch_workday_page(source_url, page_number)
     if adapter == "departmental":
         if source_url not in DEPARTMENTAL_URLS:
             raise RuntimeError("untrusted departmental source URL")

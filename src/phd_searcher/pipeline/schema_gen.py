@@ -31,6 +31,11 @@ from phd_searcher.pipeline.schema_quality import (
 )
 from phd_searcher.pipeline.source_validation import SchemaDeferredError, employer_evidence, page_state
 from phd_searcher.pipeline.urls import is_listing_page_url
+from phd_searcher.pipeline.workday import linked_workday_board, recruitment_referrer, workday_board
+
+
+class _SchemaPreparedError(Exception):
+    """A deterministic adapter has completed schema preparation without an LLM."""
 
 _QUERY_UNIVERSITY = (
     "This page lists open PhD positions / doctoral vacancies. Extract the repeated "
@@ -363,7 +368,7 @@ async def run(
 
         reusable_schemas: dict[tuple[str, str], list[dict[str, object]]] = {}
         for existing in existing_pages:
-            if existing.schema_status != "ok" or not isinstance(existing.extraction_schema, dict):
+            if existing.schema_status != "ok" or not isinstance(existing.extraction_schema, dict) or existing.extraction_schema.get("adapter"):
                 continue
             _remember_schema(
                 reusable_schemas,
@@ -381,6 +386,7 @@ async def run(
             ))
             .order_by(
                 case((ListingPage.kind == "aggregator", 0), else_=1),
+                case((ListingPage.url.like("https://%.myworkdayjobs.com/%"), 0), else_=1),
                 case((ListingPage.schema_status == "missing", 0), else_=1),
                 func.coalesce(University.sitelinks, 0).desc(),
             )
@@ -400,6 +406,30 @@ async def run(
                 if progress.should_stop:
                     break
                 try:
+                    if workday_board(page.url) is not None:
+                        referrer = (page.quality_metrics or {}).get("discovery_referrer")
+                        trusted = False
+                        if uni is not None and isinstance(referrer, str) and recruitment_referrer(referrer, uni.website_url):
+                            # Revalidate the actual link, including all location filters.
+                            # Stored provenance alone is not an authorization shortcut.
+                            proof = await crawler.arun(referrer, config=crawl_config)
+                            proof_url = proof.redirected_url or referrer
+                            trusted = bool(proof.success and recruitment_referrer(proof_url, uni.website_url)
+                                           and linked_workday_board(proof.html or "", proof_url, page.url))
+                        if not trusted:
+                            page.schema_status = "deferred"
+                            page.quality_status = "quarantine"
+                            page.quality_reason = "source_preflight:ownership_unverified"
+                            page.quality_checked_at = datetime.now(UTC).replace(tzinfo=None)
+                            raise SchemaDeferredError(page.quality_reason)
+                        page.extraction_schema = {"adapter": "workday", "baseSelector": "body", "fields": []}
+                        page.pagination_param = "page"
+                        page.schema_status = "ok"
+                        page.quality_status = "unknown"
+                        page.quality_reason = None
+                        generated += 1
+                        print(f"schema_gen: prepared scoped Workday adapter without LLM for {page.url}")
+                        raise _SchemaPreparedError
                     async def crawl_listing(listing_url: str = page.url) -> CrawlResult:
                         result = await crawler.arun(listing_url, config=crawl_config)
                         if not result.success or not result.html:
@@ -476,7 +506,7 @@ async def run(
                     page.schema_status = "ok"
                     _remember_schema(reusable_schemas, cache_key, schema)
                     generated += 1
-                except SchemaDeferredError:
+                except (SchemaDeferredError, _SchemaPreparedError):
                     pass
                 except Exception as exc:
                     if _should_stop(progress):

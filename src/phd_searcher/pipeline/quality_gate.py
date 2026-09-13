@@ -607,7 +607,8 @@ def _recover_clean_candidate(
 def _apply_listing_health(listing_page: ListingPage, health: ListingHealth, *, now: datetime) -> None:
     """Persiste l'aggregato e richiede un nuovo schema per fonti in quarantena."""
     listing_page.quality_status = health.status.value
-    listing_page.quality_metrics = health.as_dict()
+    # Keep acquisition provenance when refreshing calculated health metrics.
+    listing_page.quality_metrics = {**(listing_page.quality_metrics or {}), **health.as_dict()}
     listing_page.quality_checked_at = now
     if health.status == ListingHealthStatus.HEALTHY:
         listing_page.quality_reason = None
