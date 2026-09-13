@@ -7,6 +7,24 @@ main expansion strategy. No global scraping of LinkedIn is planned.
 
 ## Deployment checkpoint — 2026-09-13
 
+### First acquisition canaries launched
+
+After the catalog import, two institutions were admitted to discovery: Idiap
+(Switzerland) and OFAI (Austria). Ordinary HTTPS preflight found their Careers /
+Jobs links using the generic candidate extractor from the registry homepages;
+no hard-coded listing seed was added. AITHYRA (403), IDSIA (candidate is a parent
+USI board; ownership needs checking) and Lamarr (news-only initial candidates)
+were not admitted to this first cohort. This is a purposive positive-control
+sample, not a random recall estimate for all 15,594 new entities.
+
+Each run uses discovery -> schema -> scrape -> quality -> index, with limits
+1 institution / 3 schemas / 3 sources / 3 quality sources / 100 index positions
+and 3 pages per source. No deep review or detail enrichment. The persistent
+scheduler serializes the runs; actual IDs/current state are in the ignored
+operator checkpoint. At launch no completed acquisition results are claimed.
+Evaluate new unique current searchable opportunities, errors, attribution and
+stage elapsed time before increasing the batch.
+
 The catalog foundation below is now implemented and deployed. Older sections
 describe the investigation/proposal; this checkpoint supersedes their identity
 storage and import status, not their unresolved source-discovery limitations.
