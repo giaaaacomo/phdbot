@@ -353,6 +353,16 @@ async def _upsert_items(
         auto_rescreen = and_(detail_change, Position.screening_manual.is_(False))
         upsert = insert_stmt.on_conflict_do_update(
             index_elements=["url"],
+            # A consortium/directory can repeat another employer's canonical
+            # URL. Its scrape must not seize that record, erase richer details,
+            # or reset its review. Same-source refreshes and a previously
+            # unresolved employer remain admissible; cross-owner conflicts
+            # require explicit identity resolution rather than last-writer wins.
+            where=or_(
+                Position.listing_page_id == insert_stmt.excluded.listing_page_id,
+                Position.university_id.is_(None),
+                Position.university_id.is_not_distinct_from(insert_stmt.excluded.university_id),
+            ),
             set_={
                 **{k: v for k, v in values.items() if k != "url"},
                 # I campi estratti dalla pagina dettaglio sono più ricchi: una listing

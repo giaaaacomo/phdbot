@@ -167,6 +167,11 @@ async def test_listing_refresh_preserves_a_detail_deadline_when_raw_is_omitted()
         "deadline = CASE WHEN (excluded.deadline_raw IS NOT NULL) "
         "THEN excluded.deadline ELSE positions.deadline END"
     ) in sql
+    assert (
+        "WHERE positions.listing_page_id = excluded.listing_page_id "
+        "OR positions.university_id IS NULL "
+        "OR positions.university_id IS NOT DISTINCT FROM excluded.university_id"
+    ) in sql
 
 
 @pytest.mark.asyncio

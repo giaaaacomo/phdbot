@@ -17,12 +17,14 @@ import httpx
 from crawl4ai import AsyncWebCrawler, CacheMode, CrawlerRunConfig
 from crawl4ai.models import CrawlResult
 from injector import Injector
-from sqlalchemy import case, or_, select
+from sqlalchemy import case, literal_column, or_, select
+from sqlalchemy.dialects.postgresql import Insert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from phd_searcher.config.search import SearchConfig
 from phd_searcher.database.models.listing_page import ListingPage
+from phd_searcher.database.models.position import Position
 from phd_searcher.database.models.university import University
 from phd_searcher.engine.model_helper import ModelHelper
 from phd_searcher.engine.prompt_helper import render_prompt
@@ -31,6 +33,7 @@ from phd_searcher.pipeline.curated_sources import seed_curated_sources
 from phd_searcher.pipeline.discovery_selection import DiscoverySelectionExhaustedError, select_listings
 from phd_searcher.pipeline.progress import Progress
 from phd_searcher.pipeline.retry import retry_async
+from phd_searcher.pipeline.source_owners import SourceOwners
 from phd_searcher.pipeline.urls import is_listing_page_url
 from phd_searcher.pipeline.workday import recruitment_referrer, workday_board
 
@@ -351,6 +354,21 @@ def _select_with_supported_boards(reply: str, candidates: list[_Link], website: 
     return list(dict.fromkeys([*supported, *selected]))
 
 
+def _member_source_upsert(stmt: Insert, origin_id: int, owner_id: int) -> Insert:
+    # Explicit target reference: INSERT..ON CONFLICT does not auto-correlate
+    # an ORM ListingPage in this subquery (it would scan *all* sources).
+    collected = select(Position.id).where(Position.listing_page_id == literal_column("listing_pages.id")).exists()
+    return stmt.on_conflict_do_update(
+        index_elements=["url"], set_={"university_id": owner_id},
+        where=(
+            (ListingPage.university_id == origin_id)
+            & (ListingPage.schema_status == "missing")
+            & ListingPage.last_scraped_at.is_(None)
+            & ~collected
+        ),
+    )
+
+
 async def run(
     container: Injector,
     *,
@@ -400,6 +418,7 @@ async def run(
             stmt = stmt.limit(remaining)
         unis = (await session.execute(stmt)).scalars().all()
         await progress.begin(len(unis))
+        source_owners: SourceOwners | None = None
 
         # ponytail: sequenziale, un ateneo alla volta; parallelizzare per-dominio se la run completa è troppo lenta
         async with AsyncWebCrawler() as crawler:
@@ -489,22 +508,34 @@ async def run(
                                 uni.discovery_status = "no_listing"
                         else:
                             for u in valid:
+                                owner_id = uni.id
+                                if not _same_site(u, uni.website_url):
+                                    if source_owners is None:
+                                        catalogue = (await session.execute(select(University.id, University.website_url))).all()
+                                        source_owners = SourceOwners([(row[0], row[1]) for row in catalogue])
+                                    owner_id = source_owners.resolve(u) or uni.id
                                 stmt_lp = (
                                     pg_insert(ListingPage)
                                     .values(
-                                        university_id=uni.id,
+                                        university_id=owner_id,
                                         url=u[:2048],
                                         kind="university",
                                         source="search" if u in search_hrefs else "funnel",
                                         quality_metrics={
                                             "discovery_referrer": next((c.referrer for c in candidates if c.href == u), ""),
+                                            "discovered_via_institution_id": uni.id,
                                         },
                                     )
                                 )
                                 referrer = next((c.referrer for c in candidates if c.href == u), "")
                                 # Refresh provenance only for this same owner. Never steal
                                 # another institution's source on a shared recruitment site.
-                                if referrer and recruitment_referrer(referrer, uni.website_url) and workday_board(u):
+                                if owner_id != uni.id:
+                                    # Repair only this origin's unused candidates. Never
+                                    # reassign a source with collected positions or a
+                                    # deliberate existing schema/ownership disposition.
+                                    stmt_lp = _member_source_upsert(stmt_lp, uni.id, owner_id)
+                                elif referrer and recruitment_referrer(referrer, uni.website_url) and workday_board(u):
                                     stmt_lp = stmt_lp.on_conflict_do_update(
                                         index_elements=["url"],
                                         set_={

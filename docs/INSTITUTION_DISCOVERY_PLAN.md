@@ -9,6 +9,26 @@ main expansion strategy. No global scraping of LinkedIn is planned.
 
 ### Validated discovery selection
 
+ERCIM canary117 completed in4m15s: discovery1/schema4/scrape28/quality28/index0.
+The recovered content is a member recruitment directory/programme navigation,
+not28 jobs. It exposed canonical-url upserts overwriting attribution when two
+institutions list the same link. Cross-owner conflicts now retain the existing
+record; same-source refreshes, same-owner updates and unresolved-owner records
+remain eligible. No candidate is promoted or removed by this guard.
+
+Foreign recruitment URLs are now matched against the existing catalogue using
+the most-specific unambiguous official host/subpath. Locale homepages are not
+treated as separate institutions; shared/ambiguous hosts abstain. This is cheap
+in-memory matching once per discovery run, not new network/model work. A link
+discovered via a consortium belongs to the matching institute, not automatically
+to that consortium. Only unused missing sources without positions can have an
+earlier origin attribution corrected automatically. Existing populated sources
+and their ownership are untouched. Real preview resolves AIT/FORTH/ISTI/LIST/
+Luxembourg sources; Inria/Fraunhofer remain unresolved.934 tests/Ruff/mypy pass.
+Remaining: directory-as-position artifacts, populated historical attribution,
+more ATS and actual end-to-end job recovery. DFKI currently serves a real
+challenge page (zero links); do not bypass it or spend repeated GPU work on it.
+
 Replace JSON-text selection with select_listing_pages tool calls. The same
 local model receives actionable argument validation errors, with at most three
 corrections and bounded output/context. Accept only exact supplied URLs; a
