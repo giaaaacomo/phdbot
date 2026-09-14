@@ -9,6 +9,17 @@ main expansion strategy. No global scraping of LinkedIn is planned.
 
 ### Validated discovery selection
 
+Follow-up118 exhausted the generation cap without a tool call (gpt-oss medium
+thinking). Discovery now explicitly requests low thinking for that model and
+keeps the actual exhaustion error; output/validation budgets unchanged.935
+tests/Ruff/mypy pass. Live revalidation of that setting remains pending.
+Reuse already discovered evidence instead of repeating the failed selection:
+five unused member sources from117 reconciled with SourceOwners/guarded upsert,
+after restore-verified backup. AIT/FORTH/ISTI/LIST/Luxembourg now correctly own
+those sources, while ambiguous Inria/Fraunhofer remain held. No candidate writes.
+119 only refreshed existing Italian ISTI records (10/3indexed);120 tests the
+newly attributed English source. Do not claim additional searchable jobs yet.
+
 ERCIM canary117 completed in4m15s: discovery1/schema4/scrape28/quality28/index0.
 The recovered content is a member recruitment directory/programme navigation,
 not28 jobs. It exposed canonical-url upserts overwriting attribution when two

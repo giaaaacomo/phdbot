@@ -500,6 +500,8 @@ async def run(
                             )
                         except DiscoverySelectionExhaustedError:
                             # Preserve the existing conservative supported-board fallback.
+                            if not any(workday_board(c.href) and recruitment_referrer(c.referrer, uni.website_url) for c in candidates):
+                                raise  # Keep the real tool error, not a synthetic JSON parse error.
                             valid = _select_with_supported_boards("invalid", candidates, uni.website_url)
                         else:
                             valid = _select_with_supported_boards(json.dumps(selected), candidates, uni.website_url)

@@ -70,7 +70,8 @@ async def test_native_bad_request_feedback_is_bounded_and_429_propagates():
             await select_listings(model, PROMPT, {URL}, Progress())
 
 
-async def test_native_transport_preserves_tools_and_bounds_generation(monkeypatch):
+@pytest.mark.parametrize("model_name", ["test", "gpt-oss:20b"])
+async def test_native_transport_preserves_tools_and_bounds_generation(monkeypatch, model_name):
     original = httpx.AsyncClient
     captured = []
 
@@ -81,9 +82,10 @@ async def test_native_transport_preserves_tools_and_bounds_generation(monkeypatc
         return httpx.Response(200, json={"message": message({"urls": [URL]})})
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(**kw, transport=httpx.MockTransport(respond)))
-    model = ModelHelper(LLMConfig(model="ollama/test", api_base="http://ollama.test/v1"), EmbeddingConfig(model="test"))
+    model = ModelHelper(LLMConfig(model=f"ollama/{model_name}", api_base="http://ollama.test/v1"), EmbeddingConfig(model="test"))
     assert await select_listings(model, PROMPT, {URL}, Progress()) == [URL]
     payload = captured[0]
     assert payload["tools"][0]["function"]["name"] == "select_listing_pages"
     assert payload["options"]["num_predict"] == 2048
+    assert payload.get("think") == ("low" if model_name == "gpt-oss:20b" else None)
     assert "format" not in payload

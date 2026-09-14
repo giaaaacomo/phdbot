@@ -60,6 +60,9 @@ class ModelHelper:
                 response = await client.post(f"{base}/api/chat", json={
                     "model": self._llm.model.removeprefix("ollama/"),
                     "messages": messages, "tools": tools, "stream": False,
+                    # gpt-oss defaults to medium reasoning and can spend the
+                    # entire bounded generation on thinking without a tool call.
+                    **({"think": "low"} if self._llm.model.removeprefix("ollama/").split(":")[0] == "gpt-oss" else {}),
                     "options": {"temperature": 0, "num_ctx": 16384, "num_predict": 2048},
                 })
                 response.raise_for_status()
