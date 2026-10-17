@@ -1,0 +1,28 @@
+{
+  "tagOwners": {
+    "tag:phdbot-canary-coordinator": ["autogroup:admin"],
+    "tag:phdbot-canary-runner": ["autogroup:admin"]
+  },
+  "grants": [
+    {
+      "src": ["tag:phdbot-canary-runner"],
+      "dst": ["tag:phdbot-canary-coordinator"],
+      "ip": ["tcp:443"]
+    }
+  ],
+  "tests": [
+    {
+      "src": "tag:phdbot-canary-runner",
+      "accept": ["tag:phdbot-canary-coordinator:443"],
+      "deny": [
+        "tag:phdbot-canary-coordinator:22",
+        "tag:phdbot-canary-coordinator:80",
+        "tag:phdbot-canary-coordinator:8003",
+        "tag:phdbot-canary-coordinator:8766",
+        "tag:phdbot-canary-coordinator:5432",
+        "tag:phdbot-canary-coordinator:6333",
+        "tag:phdbot-canary-coordinator:11434"
+      ]
+    }
+  ]
+}

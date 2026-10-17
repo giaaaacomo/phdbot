@@ -60,9 +60,20 @@ def repair_base_anchor_url_schema(
         for field in (*raw_fields, *raw_base_fields)
         if isinstance(field, Mapping)
     }
-    if "url" in existing_names or not _base_selector_targets_anchors(
-        repaired.get("baseSelector")
-    ):
+    if "url" in existing_names:
+        return repaired
+    if not _base_selector_targets_anchors(repaired.get("baseSelector")):
+        # If the title itself is selected from an anchor, its href is the
+        # attributable detail link. Recover that same element, never an
+        # arbitrary nearby link or a guessed URL. Inline titles stay inline.
+        for field in raw_fields:
+            if (isinstance(field, Mapping) and field.get("name") == "title"
+                    and field.get("type") == "text"
+                    and _base_selector_targets_anchors(field.get("selector"))):
+                repaired["fields"] = [*raw_fields, {
+                    "name": "url", "type": "attribute", "attribute": "href", "selector": field["selector"],
+                }]
+                break
         return repaired
     repaired["baseFields"] = [
         *raw_base_fields,

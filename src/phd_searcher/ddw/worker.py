@@ -119,6 +119,10 @@ def validate(task: dict[str, Any]) -> None:
 
 
 def fetch(url: str, hosts: list[str], timeout: float) -> tuple[bytes, dict[str, Any]]:
+    return fetch_public(url, hosts, timeout, max_bytes=MAX_BYTES, content_type="text/html")
+
+
+def fetch_public(url: str, hosts: list[str], timeout: float, *, max_bytes: int, content_type: str) -> tuple[bytes, dict[str, Any]]:
     host, path = public_url(url, hosts)
     addresses = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
     ips = [str(entry[4][0]) for entry in addresses]
@@ -132,17 +136,17 @@ def fetch(url: str, hosts: list[str], timeout: float) -> tuple[bytes, dict[str, 
         connection.sock = ssl.create_default_context().wrap_socket(raw_socket, server_hostname=host)
         query = urlsplit(url).query
         connection.request("GET", path + ("?" + query if query else ""), headers={
-            "User-Agent": "PHDBOT-DDW-experiment/1", "Accept": "text/html", "Accept-Encoding": "identity",
+            "User-Agent": "PHDBOT-DDW-experiment/1", "Accept": content_type, "Accept-Encoding": "identity",
         })
         response = connection.getresponse()
         if response.status != 200:
             raise ValueError(f"http_{response.status}")
         if response.getheader("Content-Encoding", "identity") != "identity":
             raise ValueError("unsupported_encoding")
-        if "text/html" not in response.getheader("Content-Type", "").lower():
+        if content_type not in response.getheader("Content-Type", "").lower():
             raise ValueError("unsupported_content_type")
-        body = response.read(MAX_BYTES + 1)
-        if len(body) > MAX_BYTES:
+        body = response.read(max_bytes + 1)
+        if len(body) > max_bytes:
             raise ValueError("body_limit")
         return body, {"status": response.status, "content_type": response.getheader("Content-Type")}
     finally:
